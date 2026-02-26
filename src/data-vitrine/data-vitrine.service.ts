@@ -153,18 +153,6 @@ export class DataVitrineService {
       ]);
     }
 
-    let review: any = null;
-    if (status === 'Доставлен') {
-      const isPositive = Math.random() > 0.3; // 70% positive rate
-      const rating = isPositive
-        ? faker.number.int({ min: 4, max: 5 })
-        : faker.number.int({ min: 1, max: 3 });
-      const comment = this.randomChoice(
-        isPositive ? positiveReviews : negativeReviews,
-      );
-      review = { rating, comment };
-    }
-
     // Генерируем дату заказа
     const orderDateObj = faker.date.recent();
 
@@ -181,11 +169,25 @@ export class DataVitrineService {
     ).toISOString();
 
     // updatedAt = orderDate + случайный отрезок (0–5 часов + минуты)
+    const hoursOffset = faker.number.int({ min: 0, max: 5 });
+    const minutesOffset = faker.number.int({ min: 0, max: 59 });
     const updatedAt = new Date(
       orderDateObj.getTime() +
-      faker.number.int({ min: 0, max: 5 }) * 60 * 60 * 1000 + // часы
-      faker.number.int({ min: 0, max: 59 }) * 60 * 1000,       // минуты
+      hoursOffset * 60 * 60 * 1000 +
+      minutesOffset * 60 * 1000,
     ).toISOString();
+
+    // Review: только при статусе «Доставлен», с 20% шансом всё равно null
+    let review: any = null;
+    if (status === 'Доставлен' && Math.random() > 0.2) {
+      // Базовый рейтинг 1–5, вычитаем количество часов выполнения
+      const baseRating = faker.number.int({ min: 1, max: 5 });
+      const rating = Math.max(0, baseRating - hoursOffset);
+      const comment = this.randomChoice(
+        rating >= 3 ? positiveReviews : negativeReviews,
+      );
+      review = { rating, comment };
+    }
 
     return {
       orderId: faker.string.numeric({ length: 9, allowLeadingZeros: false }),
