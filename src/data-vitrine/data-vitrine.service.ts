@@ -63,7 +63,7 @@ export class DataVitrineService {
 
   private generateSingleOrder() {
     // Предварительно считаем суммы для financialSummary
-    const itemsCount = faker.number.int({ min: 1, max: 6 });
+    const itemsCount = faker.number.int({ min: 1, max: 7 });
     let subtotal = 0;
 
     // Генерируем товары для заказа
@@ -71,7 +71,7 @@ export class DataVitrineService {
       const price = parseFloat(
         faker.finance.amount({ min: 100, max: 1500, dec: 2 }),
       );
-      const qty = this.randomChoice([1, 2, 3]);
+      const qty = faker.number.int({ min: 1, max: 7 });
       subtotal += price * qty;
 
       return {
