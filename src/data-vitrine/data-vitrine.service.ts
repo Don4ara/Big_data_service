@@ -165,13 +165,31 @@ export class DataVitrineService {
       review = { rating, comment };
     }
 
+    // Генерируем дату заказа
+    const orderDateObj = faker.date.recent();
+
+    // orderDate в случайном формате
+    const orderDate = this.randomChoice([
+      orderDateObj.toISOString(),                              // ISO 8601
+      Math.floor(orderDateObj.getTime() / 1000),               // Unix timestamp
+      orderDateObj.toLocaleDateString('ru-RU'),                 // dd.mm.yyyy
+    ]);
+
+    // createdAt = orderDate + пару секунд (попадание записи в БД)
+    const createdAt = new Date(
+      orderDateObj.getTime() + faker.number.int({ min: 1, max: 5 }) * 1000,
+    ).toISOString();
+
+    // updatedAt = orderDate + случайный отрезок (0–5 часов + минуты)
+    const updatedAt = new Date(
+      orderDateObj.getTime() +
+      faker.number.int({ min: 0, max: 5 }) * 60 * 60 * 1000 + // часы
+      faker.number.int({ min: 0, max: 59 }) * 60 * 1000,       // минуты
+    ).toISOString();
+
     return {
       orderId: faker.string.numeric({ length: 9, allowLeadingZeros: false }),
-      orderDate: this.randomChoice([
-        faker.date.recent().toISOString(), // ISO 8601
-        Math.floor(faker.date.recent().getTime() / 1000), // Unix
-        faker.date.recent().toLocaleDateString('ru-RU'), // dd.mm.yyyy
-      ]),
+      orderDate,
       currency: 'RUB',
       customer: {
         customerId: faker.string.numeric({ length: 7, allowLeadingZeros: false }),
@@ -274,8 +292,8 @@ export class DataVitrineService {
       },
       status,
       review,
-      createdAt: faker.date.past().toISOString(),
-      updatedAt: faker.date.recent().toISOString(),
+      createdAt,
+      updatedAt,
     };
   }
 
