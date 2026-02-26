@@ -216,10 +216,22 @@ export class DataVitrineService {
           lon: faker.location.longitude(),
         },
         phone: `+7${faker.string.numeric(10)}`,
-        estimatedArrival: faker.date.soon().toLocaleTimeString('ru-RU', {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
+        estimatedArrival: this.randomChoice([
+          faker.date.soon().toLocaleTimeString('ru-RU', {
+            hour: '2-digit',
+            minute: '2-digit',
+          }), // "14:30"
+          faker.date.soon().toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+          }), // "02:30 PM"
+          faker.date.soon().toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          }), // "14:30" 
+        ]),
       },
       financialSummary: {
         subtotal: parseFloat(subtotal.toFixed(2)),
