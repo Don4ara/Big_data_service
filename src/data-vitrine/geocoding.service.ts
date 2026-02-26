@@ -13,16 +13,19 @@ interface GeoResult {
 export class GeocodingService {
     private readonly logger = new Logger(GeocodingService.name);
     private readonly API_KEY: string;
-    private readonly BASE_URL = 'https://us1.locationiq.com/v1';
+    private readonly BASE_URL = 'https://api.geoapify.com/v1/geocode/search';
 
-    // Кэш: город → { lat, lon, timezone }
-    private cache = new Map<string, GeoResult>();
+    // Кэш: город → Promise (чтобы не дублировать параллельные запросы) или готовый GeoResult
+    private cache = new Map<string, Promise<GeoResult> | GeoResult>();
+
+    // Глобальная очередь для всех HTTP-запросов к API (строго 1 запрос раз в 600мс)
+    private requestChain: Promise<any> = Promise.resolve();
 
     constructor(
         private readonly httpService: HttpService,
         private readonly configService: ConfigService,
     ) {
-        this.API_KEY = this.configService.get<string>('LOCATIONIQ_API_KEY')!;
+        this.API_KEY = this.configService.get<string>('GEOAPIFY_API_KEY')!;
     }
 
     /**
@@ -34,54 +37,59 @@ export class GeocodingService {
         street: string,
         building: string,
     ): Promise<GeoResult> {
-        // Проверяем кэш по городу
+        // Если уже есть в кэше (готовый результат или процесс загрузки)
         if (this.cache.has(city)) {
             return this.cache.get(city)!;
         }
 
+        // Запускаем процесс и сразу сохраняем Promise в кэш
+        const fetchPromise = this._fetchGeoDataAndCache(city, street, building);
+        this.cache.set(city, fetchPromise);
+        return fetchPromise;
+    }
+
+    private async _fetchGeoDataAndCache(city: string, street: string, building: string): Promise<GeoResult> {
         try {
-            // 1. Геокодирование: адрес → координаты
             const query = `Russia, ${city}, ${street} ${building}`;
-            const coords = await this.geocodeAddress(query);
+            const result = await this.executeWithRateLimit(() => this.geocodeAddress(query));
 
-            // Задержка 600мс для rate limit (2 req/sec)
-            await this.delay(600);
-
-            // 2. Координаты → таймзона
-            const timezone = await this.getTimezone(coords.lat, coords.lon);
-
-            const result: GeoResult = {
-                lat: coords.lat,
-                lon: coords.lon,
-                timezone,
-            };
-
-            // Сохраняем в кэш
+            // Сохраняем в кэш уже готовый результат
             this.cache.set(city, result);
-            this.logger.log(`Geocoded: ${city} → ${coords.lat}, ${coords.lon} → ${timezone}`);
+            this.logger.log(`Geocoded (Geoapify): ${city} → ${result.lat}, ${result.lon} → ${result.timezone}`);
 
             return result;
         } catch (error) {
             this.logger.warn(`Geocoding failed for "${city}": ${error.message}. Using fallback.`);
-            // Фоллбэк: возвращаем Москву
-            return {
-                lat: '55.7558',
-                lon: '37.6173',
-                timezone: 'Europe/Samara',
-            };
+            // Фоллбэк: возвращаем Самару
+            const fallback: GeoResult = { lat: '55.7558', lon: '37.6173', timezone: 'Europe/Samara' };
+            // Сохраняем фоллбэк в кэш, чтобы больше не спамить API этим городом
+            this.cache.set(city, fallback);
+            return fallback;
         }
     }
 
     /**
-     * Геокодирование: строка адреса → { lat, lon }
+     * Выполняет функцию строго с задержкой относительно предыдущих запросов
      */
-    private async geocodeAddress(query: string): Promise<{ lat: string; lon: string }> {
-        const url = `${this.BASE_URL}/search`;
+    private executeWithRateLimit<T>(fn: () => Promise<T>): Promise<T> {
+        const next = this.requestChain.then(async () => {
+            await this.delay(600); // Строго 600мс между любыми запросами
+            return fn();
+        });
+        // Ловим ошибки в цепочке, чтобы очередь не сломалась навсегда
+        this.requestChain = next.catch(() => { });
+        return next;
+    }
+
+    /**
+     * Геокодирование через Geoapify: строка адреса → { lat, lon, timezone }
+     */
+    private async geocodeAddress(query: string): Promise<GeoResult> {
         const response = await firstValueFrom(
-            this.httpService.get(url, {
+            this.httpService.get(this.BASE_URL, {
                 params: {
-                    key: this.API_KEY,
-                    q: query,
+                    apiKey: this.API_KEY,
+                    text: query,
                     format: 'json',
                     limit: 1,
                 },
@@ -89,37 +97,27 @@ export class GeocodingService {
         );
 
         const data = response.data;
-        if (!data || !Array.isArray(data) || data.length === 0) {
+        if (!data || !data.results || data.results.length === 0) {
             throw new Error(`No results for query: ${query}`);
         }
 
-        return {
-            lat: data[0].lat,
-            lon: data[0].lon,
-        };
-    }
+        const feature = data.results[0];
 
-    /**
-     * Координаты → IANA таймзона (напр. "Europe/Moscow")
-     */
-    private async getTimezone(lat: string, lon: string): Promise<string> {
-        const url = `${this.BASE_URL}/timezone`;
-        const response = await firstValueFrom(
-            this.httpService.get(url, {
-                params: {
-                    key: this.API_KEY,
-                    lat,
-                    lon,
-                },
-            }),
-        );
-
-        const data = response.data;
-        if (!data?.timezone?.name) {
-            throw new Error(`No timezone data for coords: ${lat}, ${lon}`);
+        // Geoapify может не вернуть timezone в некоторых случаях
+        if (!feature.timezone || !feature.timezone.name) {
+            this.logger.warn(`No timezone data returned for query: ${query}, defaulting to Europe/Moscow`);
+            return {
+                lat: feature.lat.toString(),
+                lon: feature.lon.toString(),
+                timezone: 'Europe/Moscow',
+            };
         }
 
-        return data.timezone.name;
+        return {
+            lat: feature.lat.toString(),
+            lon: feature.lon.toString(),
+            timezone: feature.timezone.name, // e.g. "Europe/Moscow"
+        };
     }
 
     private delay(ms: number): Promise<void> {

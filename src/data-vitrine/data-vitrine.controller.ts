@@ -31,7 +31,7 @@ export class DataVitrineController {
   @Sse('stream')
   streamOrders(): Observable<MessageEvent> {
     // Каждые 3 секунды генерируем от 1 до 3 заказов (учитываем задержки API)
-    return interval(2000).pipe(
+    return interval(3000).pipe(
       switchMap((_) => {
         const randomCount = Math.floor(Math.random() * 3) + 1;
         return from(this.dataVitrineService.generateOrders(randomCount));
