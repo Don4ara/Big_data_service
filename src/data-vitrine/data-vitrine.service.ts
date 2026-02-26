@@ -10,6 +10,8 @@ import {
   restLegals,
   positiveReviews,
   negativeReviews,
+  customerNames,
+  courierNames,
 } from './mock-dictionaries';
 
 @Injectable()
@@ -38,7 +40,7 @@ export class DataVitrineService {
       ...order,
       orderId:
         order.orderId ||
-        `REST-MANUAL-${faker.number.int({ min: 1000, max: 9999 })}`,
+        faker.string.numeric({ length: 8, allowLeadingZeros: false }),
       createdAt: order.createdAt || new Date().toISOString(),
       updatedAt: order.updatedAt || new Date().toISOString(),
     };
@@ -73,7 +75,7 @@ export class DataVitrineService {
       subtotal += price * qty;
 
       return {
-        productId: `DISH-${faker.number.int({ min: 1000, max: 9999 })}`,
+        productId: faker.string.numeric({ length: 6, allowLeadingZeros: false }),
         name: this.generateDishName(),
         quantity: qty,
         pricePerUnit: price,
@@ -135,7 +137,7 @@ export class DataVitrineService {
     }
 
     return {
-      orderId: `REST-${faker.number.int({ min: 2024, max: 2027 })}-${faker.string.numeric(5)}`,
+      orderId: faker.string.numeric({ length: 9, allowLeadingZeros: false }),
       orderDate: this.randomChoice([
         faker.date.recent().toISOString(), // ISO 8601
         Math.floor(faker.date.recent().getTime() / 1000), // Unix
@@ -143,8 +145,8 @@ export class DataVitrineService {
       ]),
       currency: 'RUB',
       customer: {
-        customerId: `USER-${faker.string.alphanumeric(8).toUpperCase()}`,
-        fullName: faker.person.fullName(),
+        customerId: faker.string.numeric({ length: 7, allowLeadingZeros: false }),
+        fullName: Math.random() < 0.7 ? this.randomChoice(customerNames) : faker.person.fullName(),
         phone: this.randomChoice([
           `+7-${faker.string.numeric(3)}-${faker.string.numeric(3)}-${faker.string.numeric(2)}-${faker.string.numeric(2)}`,
           `8${faker.string.numeric(10)}`,
@@ -169,7 +171,7 @@ export class DataVitrineService {
         },
       },
       restaurant: {
-        restaurantId: `REST-${faker.number.int({ min: 1, max: 999 }).toString().padStart(3, '0')}`,
+        restaurantId: faker.string.numeric({ length: 4, allowLeadingZeros: false }),
         brandName: this.randomChoice(restBrands),
         legalEntity: this.randomChoice(restLegals),
         address: `${faker.location.city()}, ${faker.location.streetAddress()}`,
@@ -201,8 +203,8 @@ export class DataVitrineService {
         },
       },
       courier: {
-        courierId: `DELIV-${faker.number.int({ min: 1000, max: 9999 })}`,
-        name: faker.person.firstName(),
+        courierId: faker.string.numeric({ length: 5, allowLeadingZeros: false }),
+        name: Math.random() < 0.7 ? this.randomChoice(courierNames) : faker.person.firstName(),
         transportType: this.randomChoice([
           'bicycle',
           'car',
