@@ -13,16 +13,19 @@ import {
   customerNames,
   courierNames,
 } from './mock-dictionaries';
+import { GeocodingService } from './geocoding.service';
 
 @Injectable()
 export class DataVitrineService {
   // Хранилище сгенерированных и добавленных вручную заказов (в памяти)
   private savedOrders: any[] = [];
 
-  generateOrders(count: number): any[] {
+  constructor(private readonly geocodingService: GeocodingService) { }
+
+  async generateOrders(count: number): Promise<any[]> {
     const newOrders: any[] = [];
     for (let i = 0; i < count; i++) {
-      const order = this.generateSingleOrder();
+      const order = await this.generateSingleOrder();
       newOrders.push(order);
       this.savedOrders.push(order); // Сохраняем в память
     }
@@ -61,7 +64,7 @@ export class DataVitrineService {
     return `${adj} ${noun.toLowerCase()}`;
   }
 
-  private generateSingleOrder() {
+  private async generateSingleOrder() {
     // Предварительно считаем суммы для financialSummary
     const itemsCount = faker.number.int({ min: 1, max: 7 });
     let subtotal = 0;
@@ -115,14 +118,40 @@ export class DataVitrineService {
       ).toFixed(2),
     );
 
-    const status = this.randomChoice([
-      'Новый',
-      'Готовится',
-      'Передан курьеру',
-      'Доставляется',
-      'Доставлен',
-      'Отменен',
-    ]);
+    // Генерируем адрес покупателя
+    const city = faker.location.city();
+    const street = faker.location.street();
+    const building = `${faker.number.int({ min: 1, max: 150 })}/${faker.number.int({ min: 1, max: 10 })}`;
+
+    // Получаем координаты и таймзону по адресу через LocationIQ API
+    const geoData = await this.geocodingService.getGeoDataForAddress(city, street, building);
+
+    // 2% шанс что город ресторана не совпадает с городом покупателя
+    const isCityMismatch = Math.random() < 0.02;
+    let restaurantCity = city;
+    if (isCityMismatch) {
+      // Генерируем другой город, отличный от покупателя
+      do {
+        restaurantCity = faker.location.city();
+      } while (restaurantCity === city);
+    }
+
+    // Определяем статус: при несовпадении городов — 80% «Отменен»
+    let status: string;
+    if (isCityMismatch) {
+      status = Math.random() < 0.8
+        ? 'Отменен'
+        : this.randomChoice(['Новый', 'Готовится']);
+    } else {
+      status = this.randomChoice([
+        'Новый',
+        'Готовится',
+        'Передан курьеру',
+        'Доставляется',
+        'Доставлен',
+        'Отменен',
+      ]);
+    }
 
     let review: any = null;
     if (status === 'Доставлен') {
@@ -154,27 +183,26 @@ export class DataVitrineService {
         ]),
         email: faker.internet.email(),
         deliveryAddress: {
-          city: faker.location.city(),
-          street: faker.location.street(),
-          building: `${faker.number.int({ min: 1, max: 150 })}/${faker.number.int({ min: 1, max: 10 })}`,
+          city,
+          street,
+          building,
           apartment: faker.number.int({ min: 1, max: 500 }).toString(),
           entrance: faker.number.int({ min: 1, max: 15 }).toString(),
           floor: faker.number.int({ min: 1, max: 30 }),
           intercom: `${faker.number.int({ min: 1, max: 500 })}#`,
           postalCode: faker.location.zipCode('######'),
-          deliveryTimeZone: this.randomChoice([
-            faker.location.timeZone(), // 'Europe/Moscow', 'Asia/Yekaterinburg' etc
-            '+03:00',
-            '+05:00',
-            '+07:00',
-          ]),
+          coordinates: {
+            lat: geoData.lat,
+            lon: geoData.lon,
+          },
+          deliveryTimeZone: geoData.timezone,
         },
       },
       restaurant: {
         restaurantId: faker.string.numeric({ length: 4, allowLeadingZeros: false }),
         brandName: this.randomChoice(restBrands),
         legalEntity: this.randomChoice(restLegals),
-        address: `${faker.location.city()}, ${faker.location.streetAddress()}`,
+        address: `${restaurantCity}, ${faker.location.streetAddress()}`,
         taxInfo: {
           inn: faker.string.numeric(10),
           kpp: faker.string.numeric(9),
@@ -186,11 +214,7 @@ export class DataVitrineService {
           return {
             start: `${startHour.toString().padStart(2, '0')}:00:00`,
             end: `${endHour.toString().padStart(2, '0')}:00:00`,
-            timeZone: this.randomChoice([
-              faker.location.timeZone(),
-              '+03:00',
-              '+05:00',
-            ]),
+            timeZone: geoData.timezone,
           };
         })(),
       },
