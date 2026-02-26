@@ -8,16 +8,16 @@ import {
   MessageEvent,
 } from '@nestjs/common';
 import { DataVitrineService } from './data-vitrine.service';
-import { Observable, interval } from 'rxjs';
-import { map } from 'rxjs/operators';
+import { Observable, interval, from } from 'rxjs';
+import { switchMap, map } from 'rxjs/operators';
 
 @Controller('data-vitrine')
 export class DataVitrineController {
-  constructor(private readonly dataVitrineService: DataVitrineService) {}
+  constructor(private readonly dataVitrineService: DataVitrineService) { }
 
   // 1. Сгенерировать новые заказы и запомнить их (разово)
   @Get('generate')
-  generateOrders(@Query('count') count: string) {
+  async generateOrders(@Query('count') count: string) {
     let countNum = parseInt(count, 10);
     if (isNaN(countNum) || countNum < 1) {
       countNum = 10;
@@ -30,15 +30,15 @@ export class DataVitrineController {
   // 2. БЕСКОНЕЧНЫЙ ПОТОК ЗАКАЗОВ В РЕАЛЬНОМ ВРЕМЕНИ (Server-Sent Events)
   @Sse('stream')
   streamOrders(): Observable<MessageEvent> {
-    // Каждую секунду генерируем от 1 до 5 новых заказов и отправляем клиенту
-    return interval(1000).pipe(
-      map((_) => {
-        const randomCount = Math.floor(Math.random() * 5) + 1;
-        const newOrders = this.dataVitrineService.generateOrders(randomCount);
-        return {
-          data: newOrders,
-        } as MessageEvent;
+    // Каждые 3 секунды генерируем от 1 до 3 заказов (учитываем задержки API)
+    return interval(2000).pipe(
+      switchMap((_) => {
+        const randomCount = Math.floor(Math.random() * 3) + 1;
+        return from(this.dataVitrineService.generateOrders(randomCount));
       }),
+      map((newOrders) => ({
+        data: newOrders,
+      } as MessageEvent)),
     );
   }
 
