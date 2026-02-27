@@ -188,6 +188,56 @@ export class DataVitrineService {
       );
       review = { rating, comment };
     }
+    // ---------------------------------------------------------
+    // Делается ПОСЛЕ всех расчетов, чтобы не сломать математику
+    // ---------------------------------------------------------
+
+    // Хелпер для порчи денег (шанс 2% на каждую ошибку)
+    const spoilMoney = (amount: number): string | number => {
+      let result: string | number = amount;
+      if (Math.random() < 0.02) {
+        // Замена точки на запятую
+        result = result.toString().replace('.', ',');
+      }
+      if (Math.random() < 0.02) {
+        // Добавление валюты
+        const suffix = this.randomChoice(['руб.', 'р.', 'рублей', '₽']);
+        result = `${result} ${suffix}`;
+      }
+      return result;
+    };
+
+    // Хелпер для порчи количества (шанс 3%)
+    const spoilQuantity = (qty: number): string | number => {
+      if (Math.random() < 0.02) {
+        return `${qty} шт.`;
+      }
+      return qty;
+    };
+
+    // Применяем порчу к товарам
+    const spoiledItems = items.map(item => ({
+      ...item,
+      quantity: spoilQuantity(item.quantity) as number, // хак типов для схемы
+      pricePerUnit: spoilMoney(item.pricePerUnit) as number,
+    }));
+
+    // Применяем порчу к финансам
+    const spoiledFinancialSummary = {
+      subtotal: spoilMoney(parseFloat(subtotal.toFixed(2))) as number,
+      taxAmount: spoilMoney(taxAmount) as number,
+      deliveryFee: spoilMoney(deliveryFee) as number,
+      serviceFee: spoilMoney(serviceFee) as number,
+      discountAmount: spoilMoney(discountAmount) as number,
+      grandTotal: spoilMoney(grandTotal) as number,
+      paymentMethod: this.randomChoice([
+        'CARD_ONLINE',
+        'CASH',
+        'APPLE_PAY',
+        'GOOGLE_PAY',
+        'SBP',
+      ]),
+    };
 
     return {
       orderId: faker.string.numeric({ length: 9, allowLeadingZeros: false }),
@@ -239,7 +289,7 @@ export class DataVitrineService {
         })(),
       },
       orderContent: {
-        items: items,
+        items: spoiledItems, // используем испорченные товары
         options: {
           numberOfCutlery: faker.number.int({ min: 0, max: 5 }),
           requiresContactlessDelivery: faker.datatype.boolean(),
@@ -277,21 +327,7 @@ export class DataVitrineService {
           }), // "14:30" 
         ]),
       },
-      financialSummary: {
-        subtotal: parseFloat(subtotal.toFixed(2)),
-        taxAmount: taxAmount,
-        deliveryFee: deliveryFee,
-        serviceFee: serviceFee,
-        discountAmount: discountAmount,
-        grandTotal: grandTotal,
-        paymentMethod: this.randomChoice([
-          'CARD_ONLINE',
-          'CASH',
-          'APPLE_PAY',
-          'GOOGLE_PAY',
-          'SBP',
-        ]),
-      },
+      financialSummary: spoiledFinancialSummary, // используем испорченные финансы
       status,
       review,
       createdAt,
