@@ -45,24 +45,46 @@ export const dishCategories = [
     'Коктейли', 'Здоровое питание', 'Комбо-наборы', 'Вок', 'Мангал', 'Блины', 'Авторская кухня'
 ];
 
-export const restBrands = [
-    'Вкусная Точка', 'Бургер Кинг', 'Додо Пицца', 'Теремок', 'Шоколадница', 'Якитория', 'Тануки',
-    'KFC', 'Ростикс', 'Мама Рома', 'Сыроварня', 'Black Star Burger', 'Subway', 'Pizza Hut',
-    'Papa Johns', 'Dominos Pizza', 'Cofix', 'Starbucks', 'Costa Coffee', 'Пятёрочка Кафе',
-    'Магнит Кулинария', 'ВкусВилл', 'Азбука Вкуса', 'МясоROOB', 'Фарш', 'Frank by Basta',
-    'Krooooshka Kartoshka', 'Му-Му', 'Грабли', 'Иль Патио', 'Планета Суши', 'Чайхона №1',
-    'Хинкальная', 'Джонджоли', 'Евразия', 'Марчеллис', 'Токио-City', 'Crispy Burger',
-    'Kebab House', 'Sushi Wok', 'Братья Караваевы', 'Пицца Фабрика', 'Суши Мастер',
-    'Светлый Кафе', 'Бургер Хаус', 'Пекарня №1', 'Урюк', 'Бахрома', 'Мансарда', 'Вах! Тандыр'
-];
-
-export const restLegals = [
-    'ООО "ФудТех"', 'ООО "Ресторан Групп"', 'ИП Иванов И.И.', 'АО "БыстроПитание"', 'ООО "Вкусный Мир"',
-    'ООО "Гастрономия"', 'ИП Сидоров А.В.', 'ООО "ДеливериКлаб"', 'ООО "Яндекс.Еда"', 'ООО "СберМаркет"',
-    'ООО "Самокат"', 'ЗАО "Ресторанный Синдикат"', 'ПАО "Глобал Фудс"', 'ООО "Шеф-Повар"', 'ИП Петров П.П.',
-    'ООО "Вкусно и Точка"', 'ООО "Додо Франчайзинг"', 'ООО "Бургер Рус"', 'ООО "Балтресторан"',
-    'ИП Смирнова Е.А.', 'АО "ИнтерФуд"', 'ООО "Пицца Сеть"', 'ИП Гаджиев Р.М.', 'ООО "Кофейный Дом"',
-    'ЗАО "Хорека Холдинг"', 'ООО "Азиатские Традиции"', 'ИП Романова С.В.', 'ООО "Мясо и Угли"'
+export const restaurants = [
+    { restaurantId: '9944', brandName: 'Subway', legalEntity: 'ООО "Вкусно и Точка"' },
+    { restaurantId: '9566', brandName: 'Токио-City', legalEntity: 'ИП Смирнова Е.А.' },
+    { restaurantId: '1001', brandName: 'Вкусная Точка', legalEntity: 'ООО "ФудТех"' },
+    { restaurantId: '1002', brandName: 'Бургер Кинг', legalEntity: 'ООО "Бургер Рус"' },
+    { restaurantId: '1003', brandName: 'Додо Пицца', legalEntity: 'ООО "Додо Франчайзинг"' },
+    { restaurantId: '1004', brandName: 'Теремок', legalEntity: 'АО "БыстроПитание"' },
+    { restaurantId: '1005', brandName: 'Шоколадница', legalEntity: 'ООО "Кофейный Дом"' },
+    { restaurantId: '1006', brandName: 'Якитория', legalEntity: 'ООО "Азиатские Традиции"' },
+    { restaurantId: '1007', brandName: 'Тануки', legalEntity: 'ЗАО "Ресторанный Синдикат"' },
+    { restaurantId: '1008', brandName: 'KFC', legalEntity: 'ПАО "Глобал Фудс"' },
+    { restaurantId: '1009', brandName: 'Ростикс', legalEntity: 'ООО "Ресторан Групп"' },
+    { restaurantId: '1010', brandName: 'Мама Рома', legalEntity: 'ООО "Гастрономия"' },
+    { restaurantId: '1011', brandName: 'Сыроварня', legalEntity: 'ООО "Вкусный Мир"' },
+    { restaurantId: '1012', brandName: 'Black Star Burger', legalEntity: 'ИП Иванов И.И.' },
+    { restaurantId: '1013', brandName: 'Pizza Hut', legalEntity: 'ООО "Пицца Сеть"' },
+    { restaurantId: '1014', brandName: 'Papa Johns', legalEntity: 'АО "ИнтерФуд"' },
+    { restaurantId: '1015', brandName: 'Dominos Pizza', legalEntity: 'ООО "Балтресторан"' },
+    { restaurantId: '1016', brandName: 'Cofix', legalEntity: 'ИП Сидоров А.В.' },
+    { restaurantId: '1017', brandName: 'Starbucks', legalEntity: 'ООО "Шеф-Повар"' },
+    { restaurantId: '1018', brandName: 'Costa Coffee', legalEntity: 'ИП Романова С.В.' },
+    { restaurantId: '1019', brandName: 'Пятёрочка Кафе', legalEntity: 'ООО "СберМаркет"' },
+    { restaurantId: '1020', brandName: 'ВкусВилл', legalEntity: 'ООО "Яндекс.Еда"' },
+    { restaurantId: '1021', brandName: 'Азбука Вкуса', legalEntity: 'ООО "Самокат"' },
+    { restaurantId: '1022', brandName: 'МясоROOB', legalEntity: 'ООО "Мясо и Угли"' },
+    { restaurantId: '1023', brandName: 'Фарш', legalEntity: 'ИП Гаджиев Р.М.' },
+    { restaurantId: '1024', brandName: 'Frank by Basta', legalEntity: 'ЗАО "Хорека Холдинг"' },
+    { restaurantId: '1025', brandName: 'Krooooshka Kartoshka', legalEntity: 'ООО "ДеливериКлаб"' },
+    { restaurantId: '1026', brandName: 'Му-Му', legalEntity: 'ИП Петров П.П.' },
+    { restaurantId: '1027', brandName: 'Грабли', legalEntity: 'ООО "Ресторан Групп"' },
+    { restaurantId: '1028', brandName: 'Иль Патио', legalEntity: 'ООО "Гастрономия"' },
+    { restaurantId: '1029', brandName: 'Планета Суши', legalEntity: 'ЗАО "Ресторанный Синдикат"' },
+    { restaurantId: '1030', brandName: 'Чайхона №1', legalEntity: 'ПАО "Глобал Фудс"' },
+    { restaurantId: '1031', brandName: 'Хинкальная', legalEntity: 'ООО "Вкусно и Точка"' },
+    { restaurantId: '1032', brandName: 'Джонджоли', legalEntity: 'ООО "Азиатские Традиции"' },
+    { restaurantId: '1033', brandName: 'Евразия', legalEntity: 'АО "ИнтерФуд"' },
+    { restaurantId: '1034', brandName: 'Марчеллис', legalEntity: 'ООО "ДеливериКлаб"' },
+    { restaurantId: '1035', brandName: 'Crispy Burger', legalEntity: 'ООО "ФудТех"' },
+    { restaurantId: '1036', brandName: 'Kebab House', legalEntity: 'ИП Иванов И.И.' },
+    { restaurantId: '1037', brandName: 'Sushi Wok', legalEntity: 'ИП Смирнова Е.А.' }
 ];
 
 export const positiveReviews = [
