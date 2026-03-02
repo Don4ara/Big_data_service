@@ -6,8 +6,7 @@ import {
   dishNouns,
   desserts,
   dishCategories,
-  restBrands,
-  restLegals,
+  restaurants,
   positiveReviews,
   negativeReviews,
   customerNames,
@@ -180,9 +179,13 @@ export class DataVitrineService {
     // Review: только при статусе «Доставлен», с 20% шансом всё равно null
     let review: any = null;
     if (status === 'Доставлен' && Math.random() > 0.2) {
-      // Базовый рейтинг 1–5, вычитаем количество часов выполнения
-      const baseRating = faker.number.int({ min: 1, max: 5 });
-      const rating = Math.max(0, baseRating - hoursOffset);
+      // Базовый рейтинг от 3 до 5 (чаще хорошие оценки)
+      const baseRating = faker.number.int({ min: 3, max: 5 });
+      // Вычитаем количество часов выполнения доставки, чтобы рейтинг зависел от неё
+      // Вычитаем 1 балл за каждые 1-2 часа, чтобы рейтинг не скатывался в 0
+      const downgrade = Math.floor(hoursOffset / 2);
+      // Рейтинг не может быть меньше 1
+      const rating = Math.max(1, baseRating - downgrade);
       const comment = this.randomChoice(
         rating >= 3 ? positiveReviews : negativeReviews,
       );
@@ -239,6 +242,9 @@ export class DataVitrineService {
       ]),
     };
 
+    // Выбираем случайный ресторан из статичного списка
+    const selectedRestaurant = this.randomChoice(restaurants);
+
     return {
       orderId: faker.string.numeric({ length: 9, allowLeadingZeros: false }),
       orderDate,
@@ -269,9 +275,9 @@ export class DataVitrineService {
         },
       },
       restaurant: {
-        restaurantId: faker.string.numeric({ length: 4, allowLeadingZeros: false }),
-        brandName: this.randomChoice(restBrands),
-        legalEntity: this.randomChoice(restLegals),
+        restaurantId: selectedRestaurant.restaurantId,
+        brandName: selectedRestaurant.brandName,
+        legalEntity: selectedRestaurant.legalEntity,
         address: `${restaurantCity}, ${faker.location.streetAddress()}`,
         taxInfo: {
           inn: faker.string.numeric(10),
