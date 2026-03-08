@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client"
   output   = "../generated/prisma"
@@ -11,4 +8,230 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────
+// Корневая модель заказа
+// ─────────────────────────────────────────────
+model Order {
+  id        Int    @id @default(autoincrement())
+  orderId   String @unique // "874593021"
+  orderDate String // ISO / Unix timestamp / dd.mm.yyyy — храним как есть
+  currency  String @default("RUB")
+  status    String // "Новый", "Готовится", "Передан курьеру", "Доставляется", "Доставлен", "Отменен"
+  createdAt String // ISO строка
+  updatedAt String // ISO строка
+
+  customer         Customer?
+  restaurant       Restaurant?
+  orderItems       OrderItem[]
+  orderOptions     OrderOptions?
+  courier          Courier?
+  financialSummary FinancialSummary?
+  review           Review?
+
+  @@map("orders")
+}
+
+// ─────────────────────────────────────────────
+// Покупатель (1:1 с Order)
+// ─────────────────────────────────────────────
+model Customer {
+  id         Int    @id @default(autoincrement())
+  customerId String // "1234567"
+  fullName   String
+  phone      String // разные форматы: +7-..., 8..., +7...
+  email      String
+
+  orderId Int   @unique
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  deliveryAddress DeliveryAddress?
+
+  @@map("customers")
+}
+
+// ─────────────────────────────────────────────
+// Адрес доставки (1:1 с Customer)
+// ─────────────────────────────────────────────
+model DeliveryAddress {
+  id               Int     @id @default(autoincrement())
+  city             String
+  street           String
+  building         String // "15/2"
+  apartment        String
+  entrance         String
+  floor            Int
+  intercom         String // "123#"
+  postalCode       String
+  deliveryTimeZone String? // "+03:00" или "Europe/Moscow"
+
+  customerId Int      @unique
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  coordinates Coordinates?
+
+  @@map("delivery_addresses")
+}
+
+// ─────────────────────────────────────────────
+// Координаты адреса (1:1 с DeliveryAddress)
+// ─────────────────────────────────────────────
+model Coordinates {
+  id  Int    @id @default(autoincrement())
+  lat String
+  lon String
+
+  deliveryAddressId Int             @unique
+  deliveryAddress   DeliveryAddress @relation(fields: [deliveryAddressId], references: [id], onDelete: Cascade)
+
+  @@map("coordinates")
+}
+
+// ─────────────────────────────────────────────
+// Ресторан (1:1 с Order)
+// ─────────────────────────────────────────────
+model Restaurant {
+  id           Int    @id @default(autoincrement())
+  restaurantId String // "9944"
+  brandName    String
+  legalEntity  String
+  address      String // полный адрес строкой
+
+  orderId Int   @unique
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  taxInfo      TaxInfo?
+  workingHours WorkingHours?
+
+  @@map("restaurants")
+}
+
+// ─────────────────────────────────────────────
+// Налоговая информация (1:1 с Restaurant)
+// ─────────────────────────────────────────────
+model TaxInfo {
+  id         Int    @id @default(autoincrement())
+  inn        String // ИНН (10 цифр)
+  kpp        String // КПП (9 цифр)
+  vatPercent Int    @default(20)
+
+  restaurantId Int        @unique
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@map("tax_info")
+}
+
+// ─────────────────────────────────────────────
+// Часы работы ресторана (1:1 с Restaurant)
+// ─────────────────────────────────────────────
+model WorkingHours {
+  id       Int    @id @default(autoincrement())
+  start    String // "10:00:00"
+  end      String // "20:00:00"
+  timeZone String // "Europe/Moscow"
+
+  restaurantId Int        @unique
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@map("working_hours")
+}
+
+// ─────────────────────────────────────────────
+// Позиция заказа (1:N с Order)
+// ─────────────────────────────────────────────
+model OrderItem {
+  id                  Int     @id @default(autoincrement())
+  productId           String // "123456"
+  name                String // название блюда
+  quantity            String // String: может быть "3 шт." из-за «порчи»
+  pricePerUnit        String // String: может быть "500,00 руб." из-за «порчи»
+  category            String // "Горячие блюда", "Десерты" и т.д.
+  specialInstructions String? // пожелания или null
+
+  orderId Int
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_items")
+}
+
+// ─────────────────────────────────────────────
+// Опции заказа (1:1 с Order)
+// ─────────────────────────────────────────────
+model OrderOptions {
+  id                          Int     @id @default(autoincrement())
+  numberOfCutlery             Int // 0–5
+  requiresContactlessDelivery Boolean
+  isEcoFriendlyPackaging      Boolean
+
+  orderId Int   @unique
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_options")
+}
+
+// ─────────────────────────────────────────────
+// Курьер (1:1 с Order)
+// ─────────────────────────────────────────────
+model Courier {
+  id               Int    @id @default(autoincrement())
+  courierId        String // "12345"
+  name             String
+  transportType    String // "bicycle", "car", "walking", "scooter"
+  phone            String // "+79991234567"
+  estimatedArrival String // "14:30" или "02:30 PM"
+
+  orderId Int   @unique
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  currentLocation CourierLocation?
+
+  @@map("couriers")
+}
+
+// ─────────────────────────────────────────────
+// Текущее местоположение курьера (1:1 с Courier)
+// ─────────────────────────────────────────────
+model CourierLocation {
+  id  Int   @id @default(autoincrement())
+  lat Float
+  lon Float
+
+  courierId Int     @unique
+  courier   Courier @relation(fields: [courierId], references: [id], onDelete: Cascade)
+
+  @@map("courier_locations")
+}
+
+// ─────────────────────────────────────────────
+// Финансовая сводка (1:1 с Order)
+// ─────────────────────────────────────────────
+model FinancialSummary {
+  id             Int    @id @default(autoincrement())
+  subtotal       String // String: может быть "1500,50 руб."
+  taxAmount      String
+  deliveryFee    String
+  serviceFee     String
+  discountAmount String
+  grandTotal     String
+  paymentMethod  String // "CARD_ONLINE", "CASH", "APPLE_PAY", "GOOGLE_PAY", "SBP"
+
+  orderId Int   @unique
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("financial_summaries")
+}
+
+// ─────────────────────────────────────────────
+// Отзыв (1:1 с Order, опциональный)
+// ─────────────────────────────────────────────
+model Review {
+  id      Int    @id @default(autoincrement())
+  rating  Int // 1–5
+  comment String
+
+  orderId Int   @unique
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("reviews")
 }

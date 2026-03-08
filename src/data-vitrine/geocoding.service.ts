@@ -73,7 +73,7 @@ export class GeocodingService {
      */
     private executeWithRateLimit<T>(fn: () => Promise<T>): Promise<T> {
         const next = this.requestChain.then(async () => {
-            await this.delay(600); // Строго 600мс между любыми запросами
+            await this.delay(20); // Строго 20мс между запросами для 50 RPS
             return fn();
         });
         // Ловим ошибки в цепочке, чтобы очередь не сломалась навсегда
