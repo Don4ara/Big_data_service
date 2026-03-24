@@ -30,6 +30,8 @@ model Order {
   financialSummary FinancialSummary?
   review           Review?
 
+  @@index([status])
+  @@index([id(sort: Desc)])
   @@map("orders")
 }
 
@@ -48,6 +50,9 @@ model Customer {
 
   deliveryAddress DeliveryAddress?
 
+  @@index([fullName])
+  @@index([phone])
+  @@index([email])
   @@map("customers")
 }
 
@@ -104,6 +109,7 @@ model Restaurant {
   taxInfo      TaxInfo?
   workingHours WorkingHours?
 
+  @@index([brandName])
   @@map("restaurants")
 }
 
@@ -186,6 +192,7 @@ model Courier {
 
   currentLocation CourierLocation?
 
+  @@index([name])
   @@map("couriers")
 }
 
@@ -219,6 +226,7 @@ model FinancialSummary {
   orderId Int   @unique
   order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
+  @@index([paymentMethod])
   @@map("financial_summaries")
 }
 

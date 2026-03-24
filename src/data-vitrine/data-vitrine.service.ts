@@ -19,7 +19,9 @@ import { PrismaService } from '../prisma.service';
 export class DataVitrineService {
   private readonly logger = new Logger(DataVitrineService.name);
   // Хранилище сгенерированных и добавленных вручную заказов (в памяти)
+  // Ограничено MAX_IN_MEMORY записями для защиты от утечки памяти
   private savedOrders: any[] = [];
+  private static readonly MAX_IN_MEMORY = 500;
 
   constructor(
     private readonly geocodingService: GeocodingService,
@@ -31,7 +33,12 @@ export class DataVitrineService {
     for (let i = 0; i < count; i++) {
       const order = await this.generateSingleOrder();
       newOrders.push(order);
-      this.savedOrders.push(order); // Сохраняем в память
+    }
+
+    // Сохраняем в in-memory буфер (с ограничением)
+    this.savedOrders.push(...newOrders);
+    if (this.savedOrders.length > DataVitrineService.MAX_IN_MEMORY) {
+      this.savedOrders = this.savedOrders.slice(-DataVitrineService.MAX_IN_MEMORY);
     }
 
     // Сохраняем в БД асинхронно (не блокируем отдачу данных)
@@ -42,9 +49,98 @@ export class DataVitrineService {
     return newOrders;
   }
 
-  // Получить вообще все сохраненные заказы
+  // Получить вообще все сохраненные заказы (из памяти)
   getAllOrders(): any[] {
     return this.savedOrders;
+  }
+
+  // Получить заказы из БД с пагинацией и поиском
+  async getOrdersPaginated(page: number, limit: number, search?: string, statusFilter?: string, paymentFilter?: string) {
+    const skip = (page - 1) * limit;
+
+    // Формируем условия поиска и фильтрации
+    const AND: any[] = [];
+
+    if (search) {
+      AND.push({
+        OR: [
+          { orderId: { contains: search, mode: 'insensitive' } },
+          { status: { contains: search, mode: 'insensitive' } },
+          { customer: { fullName: { contains: search, mode: 'insensitive' } } },
+          { customer: { phone: { contains: search, mode: 'insensitive' } } },
+          { customer: { email: { contains: search, mode: 'insensitive' } } },
+          { restaurant: { brandName: { contains: search, mode: 'insensitive' } } },
+          { courier: { name: { contains: search, mode: 'insensitive' } } },
+        ],
+      });
+    }
+
+    if (statusFilter) {
+      AND.push({ status: statusFilter });
+    }
+
+    if (paymentFilter) {
+      AND.push({ financialSummary: { paymentMethod: paymentFilter } });
+    }
+
+    const where: any = AND.length > 0 ? { AND } : {};
+
+    // Оптимизация: select только полей, которые реально отображаются во фронтенде
+    // вместо include всех связанных моделей целиком
+    const selectFields = {
+      id: true,
+      orderId: true,
+      orderDate: true,
+      status: true,
+      customer: {
+        select: {
+          fullName: true,
+          phone: true,
+        },
+      },
+      restaurant: {
+        select: {
+          brandName: true,
+          address: true,
+          taxInfo: {
+            select: {
+              inn: true,
+              kpp: true,
+            },
+          },
+        },
+      },
+      orderItems: {
+        select: {
+          id: true, // только для подсчёта количества
+        },
+      },
+      financialSummary: {
+        select: {
+          grandTotal: true,
+          paymentMethod: true,
+        },
+      },
+    };
+
+    const [data, total] = await Promise.all([
+      this.prisma.order.findMany({
+        where,
+        select: selectFields,
+        skip,
+        take: limit,
+        orderBy: { id: 'desc' },
+      }),
+      this.prisma.order.count({ where }),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   // Добавить свой заказ вручную
@@ -361,129 +457,252 @@ export class DataVitrineService {
   // Запись сгенерированных заказов в PostgreSQL
   // ─────────────────────────────────────────────────────
   private async saveOrdersToDb(orders: any[]): Promise<void> {
-    for (const order of orders) {
-      try {
-        await this.prisma.order.create({
-          data: {
-            orderId: order.orderId,
-            orderDate: String(order.orderDate),
-            currency: order.currency,
-            status: order.status,
-            createdAt: order.createdAt,
-            updatedAt: order.updatedAt,
+    // Оптимизация: батчевая запись через транзакцию вместо отдельных create
+    // Снижает количество roundtrip-ов к БД с N до 1
+    const operations = orders.map((order) =>
+      this.prisma.order.create({
+        data: {
+          orderId: order.orderId,
+          orderDate: String(order.orderDate),
+          currency: order.currency,
+          status: order.status,
+          createdAt: order.createdAt,
+          updatedAt: order.updatedAt,
 
-            customer: {
-              create: {
-                customerId: order.customer.customerId,
-                fullName: order.customer.fullName,
-                phone: order.customer.phone,
-                email: order.customer.email,
-                deliveryAddress: {
-                  create: {
-                    city: order.customer.deliveryAddress.city,
-                    street: order.customer.deliveryAddress.street,
-                    building: order.customer.deliveryAddress.building,
-                    apartment: order.customer.deliveryAddress.apartment,
-                    entrance: order.customer.deliveryAddress.entrance,
-                    floor: order.customer.deliveryAddress.floor,
-                    intercom: order.customer.deliveryAddress.intercom,
-                    postalCode: order.customer.deliveryAddress.postalCode,
-                    deliveryTimeZone: order.customer.deliveryAddress.deliveryTimeZone,
-                    coordinates: {
-                      create: {
-                        lat: String(order.customer.deliveryAddress.coordinates.lat),
-                        lon: String(order.customer.deliveryAddress.coordinates.lon),
-                      },
+          customer: {
+            create: {
+              customerId: order.customer.customerId,
+              fullName: order.customer.fullName,
+              phone: order.customer.phone,
+              email: order.customer.email,
+              deliveryAddress: {
+                create: {
+                  city: order.customer.deliveryAddress.city,
+                  street: order.customer.deliveryAddress.street,
+                  building: order.customer.deliveryAddress.building,
+                  apartment: order.customer.deliveryAddress.apartment,
+                  entrance: order.customer.deliveryAddress.entrance,
+                  floor: order.customer.deliveryAddress.floor,
+                  intercom: order.customer.deliveryAddress.intercom,
+                  postalCode: order.customer.deliveryAddress.postalCode,
+                  deliveryTimeZone: order.customer.deliveryAddress.deliveryTimeZone,
+                  coordinates: {
+                    create: {
+                      lat: String(order.customer.deliveryAddress.coordinates.lat),
+                      lon: String(order.customer.deliveryAddress.coordinates.lon),
                     },
                   },
                 },
               },
             },
-
-            restaurant: {
-              create: {
-                restaurantId: order.restaurant.restaurantId,
-                brandName: order.restaurant.brandName,
-                legalEntity: order.restaurant.legalEntity,
-                address: order.restaurant.address,
-                taxInfo: {
-                  create: {
-                    inn: order.restaurant.taxInfo.inn,
-                    kpp: order.restaurant.taxInfo.kpp,
-                    vatPercent: order.restaurant.taxInfo.vatPercent,
-                  },
-                },
-                workingHours: {
-                  create: {
-                    start: order.restaurant.workingHours.start,
-                    end: order.restaurant.workingHours.end,
-                    timeZone: order.restaurant.workingHours.timeZone,
-                  },
-                },
-              },
-            },
-
-            orderItems: {
-              create: order.orderContent.items.map((item: any) => ({
-                productId: item.productId,
-                name: item.name,
-                quantity: String(item.quantity),
-                pricePerUnit: String(item.pricePerUnit),
-                category: item.category,
-                specialInstructions: item.specialInstructions ?? null,
-              })),
-            },
-
-            orderOptions: {
-              create: {
-                numberOfCutlery: order.orderContent.options.numberOfCutlery,
-                requiresContactlessDelivery: order.orderContent.options.requiresContactlessDelivery,
-                isEcoFriendlyPackaging: order.orderContent.options.isEcoFriendlyPackaging,
-              },
-            },
-
-            courier: {
-              create: {
-                courierId: order.courier.courierId,
-                name: order.courier.name,
-                transportType: order.courier.transportType,
-                phone: order.courier.phone,
-                estimatedArrival: order.courier.estimatedArrival,
-                currentLocation: {
-                  create: {
-                    lat: parseFloat(order.courier.currentLocation.lat),
-                    lon: parseFloat(order.courier.currentLocation.lon),
-                  },
-                },
-              },
-            },
-
-            financialSummary: {
-              create: {
-                subtotal: String(order.financialSummary.subtotal),
-                taxAmount: String(order.financialSummary.taxAmount),
-                deliveryFee: String(order.financialSummary.deliveryFee),
-                serviceFee: String(order.financialSummary.serviceFee),
-                discountAmount: String(order.financialSummary.discountAmount),
-                grandTotal: String(order.financialSummary.grandTotal),
-                paymentMethod: order.financialSummary.paymentMethod,
-              },
-            },
-
-            ...(order.review
-              ? {
-                review: {
-                  create: {
-                    rating: order.review.rating,
-                    comment: order.review.comment,
-                  },
-                },
-              }
-              : {}),
           },
-        });
-      } catch (err) {
-        this.logger.error(`Ошибка записи заказа ${order.orderId}`, err);
+
+          restaurant: {
+            create: {
+              restaurantId: order.restaurant.restaurantId,
+              brandName: order.restaurant.brandName,
+              legalEntity: order.restaurant.legalEntity,
+              address: order.restaurant.address,
+              taxInfo: {
+                create: {
+                  inn: order.restaurant.taxInfo.inn,
+                  kpp: order.restaurant.taxInfo.kpp,
+                  vatPercent: order.restaurant.taxInfo.vatPercent,
+                },
+              },
+              workingHours: {
+                create: {
+                  start: order.restaurant.workingHours.start,
+                  end: order.restaurant.workingHours.end,
+                  timeZone: order.restaurant.workingHours.timeZone,
+                },
+              },
+            },
+          },
+
+          orderItems: {
+            create: order.orderContent.items.map((item: any) => ({
+              productId: item.productId,
+              name: item.name,
+              quantity: String(item.quantity),
+              pricePerUnit: String(item.pricePerUnit),
+              category: item.category,
+              specialInstructions: item.specialInstructions ?? null,
+            })),
+          },
+
+          orderOptions: {
+            create: {
+              numberOfCutlery: order.orderContent.options.numberOfCutlery,
+              requiresContactlessDelivery: order.orderContent.options.requiresContactlessDelivery,
+              isEcoFriendlyPackaging: order.orderContent.options.isEcoFriendlyPackaging,
+            },
+          },
+
+          courier: {
+            create: {
+              courierId: order.courier.courierId,
+              name: order.courier.name,
+              transportType: order.courier.transportType,
+              phone: order.courier.phone,
+              estimatedArrival: order.courier.estimatedArrival,
+              currentLocation: {
+                create: {
+                  lat: parseFloat(order.courier.currentLocation.lat),
+                  lon: parseFloat(order.courier.currentLocation.lon),
+                },
+              },
+            },
+          },
+
+          financialSummary: {
+            create: {
+              subtotal: String(order.financialSummary.subtotal),
+              taxAmount: String(order.financialSummary.taxAmount),
+              deliveryFee: String(order.financialSummary.deliveryFee),
+              serviceFee: String(order.financialSummary.serviceFee),
+              discountAmount: String(order.financialSummary.discountAmount),
+              grandTotal: String(order.financialSummary.grandTotal),
+              paymentMethod: order.financialSummary.paymentMethod,
+            },
+          },
+
+          ...(order.review
+            ? {
+              review: {
+                create: {
+                  rating: order.review.rating,
+                  comment: order.review.comment,
+                },
+              },
+            }
+            : {}),
+        },
+      }),
+    );
+
+    try {
+      await this.prisma.$transaction(operations);
+    } catch (err) {
+      this.logger.error('Ошибка батчевой записи заказов в БД, пробуем поштучно...', err);
+      // Fallback: если транзакция упала (например, дубликат orderId) — пишем поштучно
+      for (const order of orders) {
+        try {
+          await this.prisma.order.create({
+            data: {
+              orderId: order.orderId,
+              orderDate: String(order.orderDate),
+              currency: order.currency,
+              status: order.status,
+              createdAt: order.createdAt,
+              updatedAt: order.updatedAt,
+              customer: {
+                create: {
+                  customerId: order.customer.customerId,
+                  fullName: order.customer.fullName,
+                  phone: order.customer.phone,
+                  email: order.customer.email,
+                  deliveryAddress: {
+                    create: {
+                      city: order.customer.deliveryAddress.city,
+                      street: order.customer.deliveryAddress.street,
+                      building: order.customer.deliveryAddress.building,
+                      apartment: order.customer.deliveryAddress.apartment,
+                      entrance: order.customer.deliveryAddress.entrance,
+                      floor: order.customer.deliveryAddress.floor,
+                      intercom: order.customer.deliveryAddress.intercom,
+                      postalCode: order.customer.deliveryAddress.postalCode,
+                      deliveryTimeZone: order.customer.deliveryAddress.deliveryTimeZone,
+                      coordinates: {
+                        create: {
+                          lat: String(order.customer.deliveryAddress.coordinates.lat),
+                          lon: String(order.customer.deliveryAddress.coordinates.lon),
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              restaurant: {
+                create: {
+                  restaurantId: order.restaurant.restaurantId,
+                  brandName: order.restaurant.brandName,
+                  legalEntity: order.restaurant.legalEntity,
+                  address: order.restaurant.address,
+                  taxInfo: {
+                    create: {
+                      inn: order.restaurant.taxInfo.inn,
+                      kpp: order.restaurant.taxInfo.kpp,
+                      vatPercent: order.restaurant.taxInfo.vatPercent,
+                    },
+                  },
+                  workingHours: {
+                    create: {
+                      start: order.restaurant.workingHours.start,
+                      end: order.restaurant.workingHours.end,
+                      timeZone: order.restaurant.workingHours.timeZone,
+                    },
+                  },
+                },
+              },
+              orderItems: {
+                create: order.orderContent.items.map((item: any) => ({
+                  productId: item.productId,
+                  name: item.name,
+                  quantity: String(item.quantity),
+                  pricePerUnit: String(item.pricePerUnit),
+                  category: item.category,
+                  specialInstructions: item.specialInstructions ?? null,
+                })),
+              },
+              orderOptions: {
+                create: {
+                  numberOfCutlery: order.orderContent.options.numberOfCutlery,
+                  requiresContactlessDelivery: order.orderContent.options.requiresContactlessDelivery,
+                  isEcoFriendlyPackaging: order.orderContent.options.isEcoFriendlyPackaging,
+                },
+              },
+              courier: {
+                create: {
+                  courierId: order.courier.courierId,
+                  name: order.courier.name,
+                  transportType: order.courier.transportType,
+                  phone: order.courier.phone,
+                  estimatedArrival: order.courier.estimatedArrival,
+                  currentLocation: {
+                    create: {
+                      lat: parseFloat(order.courier.currentLocation.lat),
+                      lon: parseFloat(order.courier.currentLocation.lon),
+                    },
+                  },
+                },
+              },
+              financialSummary: {
+                create: {
+                  subtotal: String(order.financialSummary.subtotal),
+                  taxAmount: String(order.financialSummary.taxAmount),
+                  deliveryFee: String(order.financialSummary.deliveryFee),
+                  serviceFee: String(order.financialSummary.serviceFee),
+                  discountAmount: String(order.financialSummary.discountAmount),
+                  grandTotal: String(order.financialSummary.grandTotal),
+                  paymentMethod: order.financialSummary.paymentMethod,
+                },
+              },
+              ...(order.review
+                ? {
+                  review: {
+                    create: {
+                      rating: order.review.rating,
+                      comment: order.review.comment,
+                    },
+                  },
+                }
+                : {}),
+            },
+          });
+        } catch (singleErr) {
+          this.logger.error(`Ошибка записи заказа ${order.orderId}`, singleErr);
+        }
       }
     }
   }
