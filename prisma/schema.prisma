@@ -3,7 +3,6 @@
 
 generator client {
   provider   = "prisma-client-js"
-  output     = "../generated/prisma"
 }
 
 datasource db {
@@ -11,44 +10,76 @@ datasource db {
 }
 
 // ─────────────────────────────────────────────
+// Ресторан (справочник, 39 фиксированных записей)
+// ─────────────────────────────────────────────
+model Restaurant {
+  restaurantId String @id // "9944" — фиксированный уникальный ID
+  brandName    String
+  legalEntity  String
+  address      String // полный адрес строкой
+  inn          String // ИНН (10 цифр)
+  kpp          String // КПП (9 цифр)
+  vatPercent   Int    @default(20)
+  start        String // "10:00:00" — время начала работы
+  end          String // "20:00:00" — время конца работы
+  timeZone     String // "Europe/Moscow"
+
+  orders Order[]
+
+  @@index([brandName])
+  @@map("restaurants")
+}
+
+// ─────────────────────────────────────────────
 // Корневая модель заказа
 // ─────────────────────────────────────────────
 model Order {
   id        Int    @id @default(autoincrement())
-  orderId   String @unique // "874593021"
   orderDate String // ISO / Unix timestamp / dd.mm.yyyy — храним как есть
   currency  String @default("RUB")
   status    String // "Новый", "Готовится", "Передан курьеру", "Доставляется", "Доставлен", "Отменен"
   createdAt String // ISO строка
   updatedAt String // ISO строка
 
-  customer         Customer?
-  restaurant       Restaurant?
-  orderItems       OrderItem[]
-  orderOptions     OrderOptions?
-  courier          Courier?
-  financialSummary FinancialSummary?
-  review           Review?
+  // Финансовые поля (перенесены из financial_summaries)
+  subtotal       String // String: может быть "1500,50 руб."
+  taxAmount      String
+  deliveryFee    String
+  serviceFee     String
+  discountAmount String
+  grandTotal     String
+  paymentMethod  String // "CARD_ONLINE", "CASH", "APPLE_PAY", "GOOGLE_PAY", "SBP"
+
+  // Связь с покупателем
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  // Связь с рестораном
+  restaurantId String
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [restaurantId])
+
+  orderItems   OrderItem[]
+  orderOptions OrderOptions?
+  courier      Courier?
+  review       Review?
 
   @@index([status])
+  @@index([paymentMethod])
   @@index([id(sort: Desc)])
   @@map("orders")
 }
 
 // ─────────────────────────────────────────────
-// Покупатель (1:1 с Order)
+// Покупатель (id — первичный ключ)
 // ─────────────────────────────────────────────
 model Customer {
-  id         Int    @id @default(autoincrement())
-  customerId String // "1234567"
-  fullName   String
-  phone      String // разные форматы: +7-..., 8..., +7...
-  email      String
-
-  orderId Int   @unique
-  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id       Int    @id @default(autoincrement())
+  fullName String
+  phone    String // разные форматы: +7-..., 8..., +7...
+  email    String
 
   deliveryAddress DeliveryAddress?
+  orders          Order[]
 
   @@index([fullName])
   @@index([phone])
@@ -94,61 +125,10 @@ model Coordinates {
 }
 
 // ─────────────────────────────────────────────
-// Ресторан (1:1 с Order)
-// ─────────────────────────────────────────────
-model Restaurant {
-  id           Int    @id @default(autoincrement())
-  restaurantId String // "9944"
-  brandName    String
-  legalEntity  String
-  address      String // полный адрес строкой
-
-  orderId Int   @unique
-  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-
-  taxInfo      TaxInfo?
-  workingHours WorkingHours?
-
-  @@index([brandName])
-  @@map("restaurants")
-}
-
-// ─────────────────────────────────────────────
-// Налоговая информация (1:1 с Restaurant)
-// ─────────────────────────────────────────────
-model TaxInfo {
-  id         Int    @id @default(autoincrement())
-  inn        String // ИНН (10 цифр)
-  kpp        String // КПП (9 цифр)
-  vatPercent Int    @default(20)
-
-  restaurantId Int        @unique
-  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-
-  @@map("tax_info")
-}
-
-// ─────────────────────────────────────────────
-// Часы работы ресторана (1:1 с Restaurant)
-// ─────────────────────────────────────────────
-model WorkingHours {
-  id       Int    @id @default(autoincrement())
-  start    String // "10:00:00"
-  end      String // "20:00:00"
-  timeZone String // "Europe/Moscow"
-
-  restaurantId Int        @unique
-  restaurant   Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-
-  @@map("working_hours")
-}
-
-// ─────────────────────────────────────────────
 // Позиция заказа (1:N с Order)
 // ─────────────────────────────────────────────
 model OrderItem {
   id                  Int     @id @default(autoincrement())
-  productId           String // "123456"
   name                String // название блюда
   quantity            String // String: может быть "3 шт." из-за «порчи»
   pricePerUnit        String // String: может быть "500,00 руб." из-за «порчи»
@@ -181,7 +161,6 @@ model OrderOptions {
 // ─────────────────────────────────────────────
 model Courier {
   id               Int    @id @default(autoincrement())
-  courierId        String // "12345"
   name             String
   transportType    String // "bicycle", "car", "walking", "scooter"
   phone            String // "+79991234567"
@@ -208,26 +187,6 @@ model CourierLocation {
   courier   Courier @relation(fields: [courierId], references: [id], onDelete: Cascade)
 
   @@map("courier_locations")
-}
-
-// ─────────────────────────────────────────────
-// Финансовая сводка (1:1 с Order)
-// ─────────────────────────────────────────────
-model FinancialSummary {
-  id             Int    @id @default(autoincrement())
-  subtotal       String // String: может быть "1500,50 руб."
-  taxAmount      String
-  deliveryFee    String
-  serviceFee     String
-  discountAmount String
-  grandTotal     String
-  paymentMethod  String // "CARD_ONLINE", "CASH", "APPLE_PAY", "GOOGLE_PAY", "SBP"
-
-  orderId Int   @unique
-  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-
-  @@index([paymentMethod])
-  @@map("financial_summaries")
 }
 
 // ─────────────────────────────────────────────
