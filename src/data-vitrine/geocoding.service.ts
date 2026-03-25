@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
+import pLimit from 'p-limit';
 
 interface GeoResult {
     lat: string;
@@ -18,8 +19,8 @@ export class GeocodingService {
     // Кэш: город → Promise (чтобы не дублировать параллельные запросы) или готовый GeoResult
     private cache = new Map<string, Promise<GeoResult> | GeoResult>();
 
-    // Глобальная очередь для всех HTTP-запросов к API (строго 1 запрос раз в 600мс)
-    private requestChain: Promise<any> = Promise.resolve();
+    // Семафор: до 5 параллельных запросов одновременно
+    private limiter = pLimit(5);
 
     constructor(
         private readonly httpService: HttpService,
@@ -69,16 +70,10 @@ export class GeocodingService {
     }
 
     /**
-     * Выполняет функцию строго с задержкой относительно предыдущих запросов
+     * Выполняет функцию с ограничением параллельности (до 5 одновременных запросов)
      */
     private executeWithRateLimit<T>(fn: () => Promise<T>): Promise<T> {
-        const next = this.requestChain.then(async () => {
-            await this.delay(20); // Строго 20мс между запросами для 50 RPS
-            return fn();
-        });
-        // Ловим ошибки в цепочке, чтобы очередь не сломалась навсегда
-        this.requestChain = next.catch(() => { });
-        return next;
+        return this.limiter(fn);
     }
 
     /**
