@@ -548,7 +548,7 @@ export class DataVitrineService implements OnModuleInit {
               transportType: order.courier.transportType,
               phone: order.courier.phone,
               estimatedArrival: order.courier.estimatedArrival,
-              currentLocation: {
+              location: {
                 create: {
                   lat: parseFloat(order.courier.currentLocation.lat),
                   lon: parseFloat(order.courier.currentLocation.lon),
@@ -653,7 +653,7 @@ export class DataVitrineService implements OnModuleInit {
                   transportType: order.courier.transportType,
                   phone: order.courier.phone,
                   estimatedArrival: order.courier.estimatedArrival,
-                  currentLocation: {
+                  location: {
                     create: {
                       lat: parseFloat(order.courier.currentLocation.lat),
                       lon: parseFloat(order.courier.currentLocation.lon),
