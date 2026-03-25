@@ -1,0 +1,45 @@
+services:
+  worker-1:
+    build: .
+    container_name: vitrine_worker_1
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - AUTO_GENERATE=true
+      - AUTO_GENERATE_BATCH_SIZE=10
+      - AUTO_GENERATE_INTERVAL=2000
+      - PORT=3001
+      - GEOAPIFY_API_KEY=key
+    ports:
+      - "3001:3001"
+
+  worker-2:
+    build: .
+    container_name: vitrine_worker_2
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - AUTO_GENERATE=true
+      - AUTO_GENERATE_BATCH_SIZE=10
+      - AUTO_GENERATE_INTERVAL=2000
+      - PORT=3002
+      - GEOAPIFY_API_KEY=key
+    ports:
+      - "3002:3002"
+
+  worker-3:
+    build: .
+    container_name: vitrine_worker_3
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - AUTO_GENERATE=true
+      - AUTO_GENERATE_BATCH_SIZE=10
+      - AUTO_GENERATE_INTERVAL=2000
+      - PORT=3003
+      - GEOAPIFY_API_KEY=key
+    ports:
+      - "3003:3003"
