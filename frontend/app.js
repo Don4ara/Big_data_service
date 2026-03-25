@@ -149,7 +149,7 @@ function renderPage() {
     return `
       <tr class="orders__row orders__row--body"
           style="animation-delay: ${delay}ms">
-        <td class="orders__cell orders__cell--id">#${obfuscateString(order.orderId)}</td>
+        <td class="orders__cell orders__cell--id">#${order.id}</td>
         <td class="orders__cell">${obfuscateString(order.orderDate)}</td>
         <td class="orders__cell orders__cell--customer" title="${escHtml(order.customer?.fullName || '')}">
           ${obfuscateString(order.customer?.fullName || '—')}
@@ -158,12 +158,12 @@ function renderPage() {
         <td class="orders__cell orders__cell--restaurant" title="${escHtml(order.restaurant?.brandName || '')}">
           ${obfuscateString(order.restaurant?.brandName || '—')}
         </td>
-        <td class="orders__cell"><span style="font-family: monospace;">${obfuscateString(order.restaurant?.taxInfo?.inn || '—')} / ${obfuscateString(order.restaurant?.taxInfo?.kpp || '—')}</span></td>
+        <td class="orders__cell"><span style="font-family: monospace;">${obfuscateString(order.restaurant?.inn || '—')} / ${obfuscateString(order.restaurant?.kpp || '—')}</span></td>
         <td class="orders__cell" style="max-width: 150px; white-space: normal; line-height: 1.3;">
           ${obfuscateString(order.restaurant?.address || '—')}
         </td>
         <td class="orders__cell">${order.orderItems?.length || 0}</td>
-        <td class="orders__cell">${obfuscateString(order.financialSummary?.grandTotal ?? '—')}</td>
+        <td class="orders__cell">${obfuscateString(order.grandTotal ?? '—')}</td>
         <td class="orders__cell">${renderStatus(order.status)}</td>
       </tr>
     `;
