@@ -10,8 +10,11 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
     constructor() {
         const connectionString = process.env.DATABASE_URL;
-        const pool = new Pool({ connectionString });
-        
+        // Ограничиваем количество соединений для pg.Pool, так как PrismaURL params тут игнорируются
+        const pool = new Pool({
+            connectionString,
+            max: 5 // 2 соединения на каждый из 17 воркеров (в сумме 34, БД потянет)
+        });
         // Обработка разрывов сети для idle-сессий: мертвые сессии удалятся из пула
         pool.on('error', (err) => {
             console.error('Упс, обрыв соединения с БД в фоне (idle). Пул восстановится автоматически.', err.message);

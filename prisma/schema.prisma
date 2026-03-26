@@ -58,12 +58,15 @@ model Order {
   restaurantId String
   restaurant   Restaurant @relation(fields: [restaurantId], references: [restaurantId])
 
-  orderItems   OrderItem[]
-  orderOptions OrderOptions?
-  courierId    Int?
-  courier      Courier?      @relation(fields: [courierId], references: [id])
+  orderItems OrderItem[]
 
-  reviewId Int?
+  orderOptionsId Int?          @unique
+  orderOptions   OrderOptions? @relation(fields: [orderOptionsId], references: [id])
+
+  courierId Int?
+  courier   Courier? @relation(fields: [courierId], references: [id])
+
+  reviewId Int?    @unique
   review   Review? @relation(fields: [reviewId], references: [id])
 
   @@index([status])
@@ -81,8 +84,9 @@ model Customer {
   phone    String // разные форматы: +7-..., 8..., +7...
   email    String
 
-  deliveryAddress DeliveryAddress?
-  orders          Order[]
+  deliveryAddressId Int?             @unique
+  deliveryAddress   DeliveryAddress? @relation(fields: [deliveryAddressId], references: [id])
+  orders            Order[]
 
   @@index([fullName])
   @@index([phone])
@@ -105,10 +109,10 @@ model DeliveryAddress {
   postalCode       String
   deliveryTimeZone String? // "+03:00" или "Europe/Moscow"
 
-  customerId Int      @unique
-  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer Customer?
 
-  coordinates Coordinates?
+  coordinatesId Int?         @unique
+  coordinates   Coordinates? @relation(fields: [coordinatesId], references: [id])
 
   @@map("delivery_addresses")
 }
@@ -121,8 +125,7 @@ model Coordinates {
   lat String
   lon String
 
-  deliveryAddressId Int             @unique
-  deliveryAddress   DeliveryAddress @relation(fields: [deliveryAddressId], references: [id], onDelete: Cascade)
+  deliveryAddress DeliveryAddress?
 
   @@map("coordinates")
 }
@@ -153,8 +156,7 @@ model OrderOptions {
   requiresContactlessDelivery Boolean
   isEcoFriendlyPackaging      Boolean
 
-  orderId Int   @unique
-  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order Order?
 
   @@map("order_options")
 }
@@ -199,7 +201,7 @@ model Review {
   rating  Int // 1–5
   comment String
 
-  orders Order[]
+  order Order?
 
   @@map("reviews")
 }
