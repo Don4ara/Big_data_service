@@ -96,7 +96,15 @@ export class DataVitrineService implements OnModuleInit {
 
     // Запускаем генерацию всей пачки одновременно (геокодинг идёт параллельно)
     const promises = Array.from({ length: count }).map(() => this.generateSingleOrder());
-    const newOrders = await Promise.all(promises);
+    let newOrders = await Promise.all(promises);
+
+    // Фильтруем заказы, которые были отменены из-за ошибок геокодинга (достигнут лимит API)
+    newOrders = newOrders.filter(order => order !== null);
+
+    if (newOrders.length === 0) {
+      this.logger.warn('⚠️ [Воркер] Ни один из заказов не сгенерирован (вероятно, кончились лимиты API).');
+      return [];
+    }
 
     // Сохраняем в in-memory буфер (для фронтенда)
     this.savedOrders.push(...newOrders);
@@ -283,6 +291,10 @@ export class DataVitrineService implements OnModuleInit {
 
     // Получаем координаты и таймзону по адресу через LocationIQ API
     const geoData = await this.geocodingService.getGeoDataForAddress(city, street, building);
+    if (!geoData) {
+      // Геокодер не смог (кончился лимит API) возвращаем null, чтобы заказ отменился
+      return null;
+    }
 
     // Определяем статус
     const status = this.randomChoice([
