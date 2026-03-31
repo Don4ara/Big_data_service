@@ -13,7 +13,7 @@ datasource db {
 // Ресторан (справочник, 39 фиксированных записей)
 // ─────────────────────────────────────────────
 model Restaurant {
-  restaurantId String @id // "9944" — фиксированный уникальный ID
+  id           Int    @id @default(autoincrement())
   brandName    String
   legalEntity  String
   address      String // полный адрес строкой
@@ -55,8 +55,8 @@ model Order {
   customer   Customer @relation(fields: [customerId], references: [id])
 
   // Связь с рестораном
-  restaurantId String
-  restaurant   Restaurant @relation(fields: [restaurantId], references: [restaurantId])
+  restaurantId Int
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
 
   orderItems OrderItem[]
 
