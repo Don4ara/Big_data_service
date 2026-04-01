@@ -198,7 +198,7 @@ model CourierLocation {
 // ─────────────────────────────────────────────
 model Review {
   id      Int    @id @default(autoincrement())
-  rating  Int // 1–5
+  rating  Float // 0.5–5.0 с шагом 0.5
   comment String
 
   order Order?
