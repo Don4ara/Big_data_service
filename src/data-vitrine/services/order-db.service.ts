@@ -11,6 +11,20 @@ export class OrderDbService {
 
   async seedRestaurants() {
     this.logger.log('Синхронизация фиксированных ресторанов...');
+
+    // Случайная задержка (0–3 секунды) размазывает старт воркеров,
+    // чтобы они не ломились в БД абсолютно в одну миллисекунду.
+    const randomJitter = Math.floor(Math.random() * 3000);
+    await new Promise(resolve => setTimeout(resolve, randomJitter));
+
+    // Проверяем, не залил ли уже кто-то рестораны, пока мы ждали
+    const count = await this.prisma.restaurant.count();
+    if (count >= restaurants.length) {
+      this.logger.log(`Рестораны уже засеяны другим воркером (${count}). Пропуск сидирования.`);
+      this.dbRestaurantsCache = await this.prisma.restaurant.findMany();
+      return;
+    }
+
     const existingRestaurants = await this.prisma.restaurant.findMany();
     const existingByFingerprint = new Map(
       existingRestaurants.map((restaurant) => [
