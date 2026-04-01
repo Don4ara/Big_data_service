@@ -376,13 +376,18 @@ export class DataVitrineService implements OnModuleInit {
     // Review: только при статусе «Доставлен», с 20% шансом всё равно null
     let review: any = null;
     if (status === 'Доставлен' && Math.random() > 0.2) {
-      // Синтетический рейтинг: стартуем с 5.0, снижаем за время доставки
       const totalDeliveryHours = hoursOffset + minutesOffset / 60;
 
-      // Каждый полный час доставки: -0.5 к рейтингу
-      let rating = 5.0 - Math.floor(totalDeliveryHours) * 0.5;
+      // Вычисляем неизменный модификатор ресторана на основе его названия и ID.
+      // Это обеспечит разный уровень обслуживания у разных ресторанов (сдвиг медианы).
+      const charSum = selectedRestaurant.brandName.split('').reduce((sum: number, char: string) => sum + char.charCodeAt(0), 0);
+      const modOptions = [-1.0, -0.5, 0.0, 0.0, 0.5]; // Разброс "качества" заведения
+      const restaurantQualityModifier = modOptions[(selectedRestaurant.id + charSum) % modOptions.length];
 
-      // Случайный фактор «качества обслуживания»: с 30% шансом ±0.5
+      // Стартуем с 5.0, вычитаем за долгую доставку, прибавляем/вычитаем рейтинг самого ресторана
+      let rating = 5.0 - Math.floor(totalDeliveryHours) * 0.5 + restaurantQualityModifier;
+
+      // Случайный субъективный фактор (настроение клиента): с 30% шансом ±0.5
       if (Math.random() < 0.3) {
         rating += Math.random() < 0.5 ? -0.5 : 0.5;
       }
