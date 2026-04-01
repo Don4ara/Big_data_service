@@ -55,41 +55,59 @@ export class DataVitrineService implements OnModuleInit {
 
   private async seedRestaurants() {
     this.logger.log('Синхронизация фиксированных ресторанов...');
-    const existingRestaurants = await this.prisma.restaurant.findMany();
-    const existingByFingerprint = new Map(
-      existingRestaurants.map((restaurant) => [
-        this.buildRestaurantFingerprint(restaurant),
-        restaurant,
-      ]),
-    );
+    
+    // Берем блокировку на уровне Postgres, чтобы при запуске нескольких воркеров одновременно
+    // только один мог выполнить сидирование базы данных, предотвращая дублирование.
+    const lockId = 1001;
+    await this.prisma.$executeRaw`SELECT pg_advisory_lock(${lockId})`;
 
-    for (const restaurant of restaurants) {
-      const fingerprint = this.buildRestaurantFingerprint(restaurant);
-      const existingRestaurant = existingByFingerprint.get(fingerprint);
-      const data = {
-        brandName: restaurant.brandName,
-        legalEntity: restaurant.legalEntity,
-        address: restaurant.address,
-        inn: restaurant.inn,
-        kpp: restaurant.kpp,
-        vatPercent: restaurant.vatPercent,
-        start: restaurant.start,
-        end: restaurant.end,
-        timeZone: restaurant.timeZone,
-      };
+    try {
+      const existingRestaurants = await this.prisma.restaurant.findMany();
+      const existingByFingerprint = new Map(
+        existingRestaurants.map((restaurant) => [
+          this.buildRestaurantFingerprint(restaurant as any),
+          restaurant,
+        ]),
+      );
 
-      if (existingRestaurant) {
-        await this.prisma.restaurant.update({
-          where: { id: existingRestaurant.id },
-          data,
-        });
-      } else {
-        await this.prisma.restaurant.create({ data });
+      // Если в базе уже есть все рестораны, пропускаем обновление для ускорения запуска воркеров
+      if (existingRestaurants.length >= restaurants.length) {
+        this.logger.log('Рестораны уже синхронизированы в БД, пропуск...');
+        this.dbRestaurantsCache = existingRestaurants;
+        return;
       }
-    }
 
-    this.dbRestaurantsCache = await this.prisma.restaurant.findMany();
-    this.logger.log(`Синхронизировано ${this.dbRestaurantsCache.length} ресторанов`);
+      for (const restaurant of restaurants) {
+        const fingerprint = this.buildRestaurantFingerprint(restaurant as any);
+        const existingRestaurant = existingByFingerprint.get(fingerprint);
+        const data = {
+          brandName: restaurant.brandName,
+          legalEntity: restaurant.legalEntity,
+          address: restaurant.address,
+          inn: restaurant.inn,
+          kpp: restaurant.kpp,
+          vatPercent: restaurant.vatPercent,
+          start: restaurant.start,
+          end: restaurant.end,
+          timeZone: restaurant.timeZone,
+        };
+
+        if (existingRestaurant) {
+          await this.prisma.restaurant.update({
+            where: { id: existingRestaurant.id },
+            data,
+          });
+        } else {
+          await this.prisma.restaurant.create({ data });
+        }
+      }
+
+      this.dbRestaurantsCache = await this.prisma.restaurant.findMany();
+      this.logger.log(`Синхронизировано ${this.dbRestaurantsCache.length} ресторанов`);
+    } finally {
+      // Обязательно снимаем блокировку
+      await this.prisma.$executeRaw`SELECT pg_advisory_unlock(${lockId})`;
+    }
   }
 
   async generateOrders(count: number): Promise<any[]> {
