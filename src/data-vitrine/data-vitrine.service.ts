@@ -303,8 +303,13 @@ export class DataVitrineService implements OnModuleInit {
       ).toFixed(2),
     );
 
-    // Генерируем адрес покупателя
-    const city = faker.location.city();
+    // СНАЧАЛА выбираем случайный ресторан из базы
+    const selectedRestaurant = this.randomChoice(this.dbRestaurantsCache);
+    const restaurantCity = selectedRestaurant.address.split(',')[0].trim();
+
+    // С шансом 95% клиент делает заказ в своём городе, 5% — аномалия (фейковый город)
+    const isAnomaly = Math.random() < 0.05;
+    const city = isAnomaly ? faker.location.city() : restaurantCity;
     const street = faker.location.street();
     const building = `${faker.number.int({ min: 1, max: 150 })}/${faker.number.int({ min: 1, max: 10 })}`;
 
@@ -315,12 +320,7 @@ export class DataVitrineService implements OnModuleInit {
       return null;
     }
 
-    // Выбираем случайный ресторан из базы (с реальными id)
-    const selectedRestaurant = this.randomChoice(this.dbRestaurantsCache);
-
-    // Извлекаем город ресторана из адреса (первая часть до запятой)
-    const restaurantCity = selectedRestaurant.address.split(',')[0].trim();
-    const citiesMatch = restaurantCity.toLowerCase() === city.toLowerCase();
+    const citiesMatch = !isAnomaly;
 
     // Определяем статус с учётом совпадения городов
     // Сначала генерируем время жизни заказа — статус зависит от него
