@@ -305,28 +305,49 @@ export class DataVitrineService implements OnModuleInit {
     const citiesMatch = restaurantCity.toLowerCase() === city.toLowerCase();
 
     // Определяем статус с учётом совпадения городов
+    // Сначала генерируем время жизни заказа — статус зависит от него
+    const hoursOffset = faker.number.int({ min: 0, max: 5 });
+    const minutesOffset = faker.number.int({ min: 0, max: 59 });
+    const totalMinutes = hoursOffset * 60 + minutesOffset;
+
     let status: string;
-    if (citiesMatch) {
-      // Города совпадают — любой статус
-      status = this.randomChoice([
-        'Новый',
-        'Готовится',
-        'Передан курьеру',
-        'Доставляется',
-        'Доставлен',
-        'Отменен',
-      ]);
-    } else {
-      // Города НЕ совпадают — «Доставлен»/«Доставляется» только как ошибка (2%)
-      if (Math.random() < 0.01) {
-        status = this.randomChoice(['Доставлен', 'Доставляется']);
+
+    if (!citiesMatch) {
+      // Разные города — аномалия
+      if (Math.random() < 0.02) {
+        status = Math.random() < 0.5 ? 'Доставлен' : 'Доставляется';
       } else {
-        status = this.randomChoice([
-          'Новый',
-          'Готовится',
-          'Передан курьеру',
-          'Отменен',
-        ]);
+        status = Math.random() < 0.8 ? 'Отменен' : 'Новый';
+      }
+    } else {
+      // Статус вытекает из времени жизни заказа
+      if (totalMinutes < 15) {
+        // Только что создан
+        status = 'Новый';
+      } else if (totalMinutes < 45) {
+        // Начали готовить
+        const r = Math.random();
+        if (r < 0.85) status = 'Готовится';
+        else if (r < 0.95) status = 'Новый';
+        else status = 'Отменен';
+      } else if (totalMinutes < 75) {
+        // Передали курьеру
+        const r = Math.random();
+        if (r < 0.7) status = 'Передан курьеру';
+        else if (r < 0.9) status = 'Готовится';
+        else status = 'Отменен';
+      } else if (totalMinutes < 120) {
+        // В пути
+        const r = Math.random();
+        if (r < 0.7) status = 'Доставляется';
+        else if (r < 0.85) status = 'Передан курьеру';
+        else status = 'Отменен';
+      } else {
+        // 2+ часа — скорее всего доставлен
+        const r = Math.random();
+        if (r < 0.85) status = 'Доставлен';
+        else if (r < 0.95) status = 'Отменен';
+        else status = 'Доставляется';
       }
     }
 
@@ -345,9 +366,7 @@ export class DataVitrineService implements OnModuleInit {
       orderDateObj.getTime() + faker.number.int({ min: 1, max: 5 }) * 1000,
     ).toISOString();
 
-    // updatedAt = orderDate + случайный отрезок (0–5 часов + минуты)
-    const hoursOffset = faker.number.int({ min: 0, max: 5 });
-    const minutesOffset = faker.number.int({ min: 0, max: 59 });
+    // updatedAt = orderDate + hoursOffset/minutesOffset (уже определены выше)
     const updatedAt = new Date(
       orderDateObj.getTime() +
       hoursOffset * 60 * 60 * 1000 +
@@ -357,12 +376,34 @@ export class DataVitrineService implements OnModuleInit {
     // Review: только при статусе «Доставлен», с 20% шансом всё равно null
     let review: any = null;
     if (status === 'Доставлен' && Math.random() > 0.2) {
-      const baseRating = faker.number.int({ min: 3, max: 5 });
-      const downgrade = Math.floor(hoursOffset / 2);
-      const rating = Math.max(1, baseRating - downgrade);
-      const comment = this.randomChoice(
-        rating >= 3 ? positiveReviews : negativeReviews,
-      );
+      // Синтетический рейтинг: стартуем с 5.0, снижаем за время доставки
+      const totalDeliveryHours = hoursOffset + minutesOffset / 60;
+
+      // Каждый полный час доставки: -0.5 к рейтингу
+      let rating = 5.0 - Math.floor(totalDeliveryHours) * 0.5;
+
+      // Случайный фактор «качества обслуживания»: с 30% шансом ±0.5
+      if (Math.random() < 0.3) {
+        rating += Math.random() < 0.5 ? -0.5 : 0.5;
+      }
+
+      // Округляем до ближайшего 0.5 и ограничиваем диапазон [0.5, 5.0]
+      rating = Math.round(rating * 2) / 2;
+      rating = Math.max(0.5, Math.min(5.0, rating));
+
+      // Выбор комментария по зонам рейтинга
+      let comment: string;
+      if (rating >= 4.0) {
+        // Высокий рейтинг — только позитивные отзывы
+        comment = this.randomChoice(positiveReviews);
+      } else if (rating >= 3.0) {
+        // Пограничная зона — 60% позитив, 40% негатив
+        comment = this.randomChoice(Math.random() < 0.6 ? positiveReviews : negativeReviews);
+      } else {
+        // Низкий рейтинг — только негативные отзывы
+        comment = this.randomChoice(negativeReviews);
+      }
+
       review = { rating, comment };
     }
 
@@ -495,6 +536,19 @@ export class DataVitrineService implements OnModuleInit {
       createdAt,
       updatedAt,
     };
+  }
+
+  private weightedChoice<T>(choices: { value: T; weight: number }[]): T {
+    const totalWeight = choices.reduce((sum, choice) => sum + choice.weight, 0);
+    let random = Math.random() * totalWeight;
+
+    for (const choice of choices) {
+      if (random < choice.weight) {
+        return choice.value;
+      }
+      random -= choice.weight;
+    }
+    return choices[0].value;
   }
 
   private randomChoice<T>(choices: T[]): T {
