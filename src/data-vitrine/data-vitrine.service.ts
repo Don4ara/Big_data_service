@@ -359,9 +359,11 @@ export class DataVitrineService implements OnModuleInit {
     if (status === 'Доставлен' && Math.random() > 0.2) {
       // Базовый рейтинг: 3.0–5.0 с шагом 0.5
       const baseRating = this.randomChoice([3.0, 3.5, 4.0, 4.5, 5.0]);
+      // Сдвиг по уровню обслуживания ресторана (от -2.0 до +0.5)
+      const serviceBias = this.getRestaurantServiceBias(selectedRestaurant.brandName);
       // Штраф: каждый полный час опоздания → -0.5
       const penalty = hoursOffset * 0.5;
-      const rating = Math.max(0.5, baseRating - penalty);
+      const rating = Math.max(0.5, Math.min(5.0, baseRating + serviceBias - penalty));
       const comment = this.randomChoice(
         rating >= 3 ? positiveReviews : negativeReviews,
       );
@@ -522,6 +524,26 @@ export class DataVitrineService implements OnModuleInit {
   private jitterCoordinate(value: number, maxOffset: number): number {
     const offset = (Math.random() * 2 - 1) * maxOffset;
     return parseFloat((value + offset).toFixed(6));
+  }
+
+  /**
+   * Детерминированный «уровень обслуживания» ресторана.
+   * По хэшу brandName возвращает сдвиг рейтинга (bias):
+   *   +0.5  → премиум (медиана ~4.5)
+   *    0    → хороший (медиана ~4.0)
+   *   -0.5  → средний (медиана ~3.5)
+   *   -1.0  → ниже среднего (медиана ~3.0)
+   *   -1.5  → слабый (медиана ~2.5)
+   *   -2.0  → плохой (медиана ~2.0)
+   */
+  private getRestaurantServiceBias(brandName: string): number {
+    let hash = 0;
+    for (const char of brandName) {
+      hash = ((hash << 5) - hash) + char.charCodeAt(0);
+      hash |= 0; // int32
+    }
+    const biasLevels = [-2.0, -1.5, -1.0, -0.5, 0, 0.5];
+    return biasLevels[Math.abs(hash) % biasLevels.length];
   }
 
   // ─────────────────────────────────────────────────────
