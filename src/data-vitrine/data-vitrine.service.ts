@@ -54,43 +54,50 @@ export class DataVitrineService implements OnModuleInit {
   }
 
   private async seedRestaurants() {
-    this.logger.log('Синхронизация фиксированных ресторанов...');
-    const existingRestaurants = await this.prisma.restaurant.findMany();
-    const existingByFingerprint = new Map(
-      existingRestaurants.map((restaurant) => [
-        this.buildRestaurantFingerprint(restaurant),
-        restaurant,
-      ]),
-    );
-
-    for (const restaurant of restaurants) {
-      const fingerprint = this.buildRestaurantFingerprint(restaurant);
-      const existingRestaurant = existingByFingerprint.get(fingerprint);
-      const data = {
-        brandName: restaurant.brandName,
-        legalEntity: restaurant.legalEntity,
-        address: restaurant.address,
-        inn: restaurant.inn,
-        kpp: restaurant.kpp,
-        vatPercent: restaurant.vatPercent,
-        start: restaurant.start,
-        end: restaurant.end,
-        timeZone: restaurant.timeZone,
-      };
-
-      if (existingRestaurant) {
-        await this.prisma.restaurant.update({
-          where: { id: existingRestaurant.id },
-          data,
-        });
-      } else {
-        await this.prisma.restaurant.create({ data });
-      }
+    const existingCount = await this.prisma.restaurant.count();
+    if (existingCount >= restaurants.length) {
+      // База уже заполнена — только загружаем кэш
+      this.dbRestaurantsCache = await this.prisma.restaurant.findMany();
+      this.logger.log(`Кэш ресторанов загружен (${this.dbRestaurantsCache.length} шт.)`);
+      return;
     }
 
+    this.logger.log('Засеивание фиксированных ресторанов...');
+    for (const r of restaurants) {
+      await this.prisma.restaurant.upsert({
+        where: { id: r.id },
+        update: {
+          brandName: r.brandName,
+          legalEntity: r.legalEntity,
+          address: r.address,
+          inn: r.inn,
+          kpp: r.kpp,
+          vatPercent: r.vatPercent,
+          start: r.start,
+          end: r.end,
+          timeZone: r.timeZone,
+        },
+        create: {
+          id: r.id,
+          brandName: r.brandName,
+          legalEntity: r.legalEntity,
+          address: r.address,
+          inn: r.inn,
+          kpp: r.kpp,
+          vatPercent: r.vatPercent,
+          start: r.start,
+          end: r.end,
+          timeZone: r.timeZone,
+        },
+      });
+    }
+    this.logger.log(`Засеяно ${restaurants.length} ресторанов`);
+
+    // Загружаем рестораны из БД в кэш для генерации заказов
     this.dbRestaurantsCache = await this.prisma.restaurant.findMany();
-    this.logger.log(`Синхронизировано ${this.dbRestaurantsCache.length} ресторанов`);
+    this.logger.log(`Загружено ${this.dbRestaurantsCache.length} ресторанов в кэш`);
   }
+
 
   async generateOrders(count: number): Promise<any[]> {
     this.logger.log(`🛠 [Воркер] Начинаю подготовку ${count} заказов (параллельно)...`);
