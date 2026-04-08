@@ -11,7 +11,7 @@ pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
-docker-compose.workers.yml
+docker-compose.*.yml
 
 # OS
 .DS_Store
