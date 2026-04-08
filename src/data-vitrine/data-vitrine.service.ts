@@ -333,9 +333,11 @@ export class DataVitrineService implements OnModuleInit {
     // Review: только при статусе «Доставлен», с 20% шансом всё равно null
     let review: any = null;
     if (status === 'Доставлен' && Math.random() > 0.2) {
-      const baseRating = faker.number.int({ min: 3, max: 5 });
-      const downgrade = Math.floor(hoursOffset / 2);
-      const rating = Math.max(1, baseRating - downgrade);
+      // Базовый рейтинг: 3.0–5.0 с шагом 0.5
+      const baseRating = this.randomChoice([3.0, 3.5, 4.0, 4.5, 5.0]);
+      // Штраф: каждый полный час опоздания → -0.5
+      const penalty = hoursOffset * 0.5;
+      const rating = Math.max(0.5, baseRating - penalty);
       const comment = this.randomChoice(
         rating >= 3 ? positiveReviews : negativeReviews,
       );
