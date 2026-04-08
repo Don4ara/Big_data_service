@@ -21,6 +21,7 @@ export class DataVitrineService implements OnModuleInit {
   // Ограничено MAX_IN_MEMORY записями для защиты от утечки памяти
   private savedOrders: any[] = [];
   private static readonly MAX_IN_MEMORY = 500;
+  private dbRestaurantsCache: any[] = [];
 
   constructor(
     private readonly geocodingService: GeocodingService,
@@ -53,42 +54,42 @@ export class DataVitrineService implements OnModuleInit {
   }
 
   private async seedRestaurants() {
-    const existingCount = await this.prisma.restaurant.count();
-    if (existingCount >= restaurants.length) {
-      // Молча пропускаем, если база уже заполнена
-      return;
+    this.logger.log('Синхронизация фиксированных ресторанов...');
+    const existingRestaurants = await this.prisma.restaurant.findMany();
+    const existingByFingerprint = new Map(
+      existingRestaurants.map((restaurant) => [
+        this.buildRestaurantFingerprint(restaurant),
+        restaurant,
+      ]),
+    );
+
+    for (const restaurant of restaurants) {
+      const fingerprint = this.buildRestaurantFingerprint(restaurant);
+      const existingRestaurant = existingByFingerprint.get(fingerprint);
+      const data = {
+        brandName: restaurant.brandName,
+        legalEntity: restaurant.legalEntity,
+        address: restaurant.address,
+        inn: restaurant.inn,
+        kpp: restaurant.kpp,
+        vatPercent: restaurant.vatPercent,
+        start: restaurant.start,
+        end: restaurant.end,
+        timeZone: restaurant.timeZone,
+      };
+
+      if (existingRestaurant) {
+        await this.prisma.restaurant.update({
+          where: { id: existingRestaurant.id },
+          data,
+        });
+      } else {
+        await this.prisma.restaurant.create({ data });
+      }
     }
 
-    this.logger.log('Засеивание фиксированных ресторанов...');
-    for (const r of restaurants) {
-      await this.prisma.restaurant.upsert({
-        where: { restaurantId: r.restaurantId },
-        update: {
-          brandName: r.brandName,
-          legalEntity: r.legalEntity,
-          address: r.address,
-          inn: r.inn,
-          kpp: r.kpp,
-          vatPercent: r.vatPercent,
-          start: r.start,
-          end: r.end,
-          timeZone: r.timeZone,
-        },
-        create: {
-          restaurantId: r.restaurantId,
-          brandName: r.brandName,
-          legalEntity: r.legalEntity,
-          address: r.address,
-          inn: r.inn,
-          kpp: r.kpp,
-          vatPercent: r.vatPercent,
-          start: r.start,
-          end: r.end,
-          timeZone: r.timeZone,
-        },
-      });
-    }
-    this.logger.log(`Засеяно ${restaurants.length} ресторанов`);
+    this.dbRestaurantsCache = await this.prisma.restaurant.findMany();
+    this.logger.log(`Синхронизировано ${this.dbRestaurantsCache.length} ресторанов`);
   }
 
   async generateOrders(count: number): Promise<any[]> {
@@ -289,22 +290,45 @@ export class DataVitrineService implements OnModuleInit {
     const street = faker.location.street();
     const building = `${faker.number.int({ min: 1, max: 150 })}/${faker.number.int({ min: 1, max: 10 })}`;
 
-    // Получаем координаты и таймзону по адресу через LocationIQ API
+    // Получаем координаты и таймзону по адресу через Geoapify API
     const geoData = await this.geocodingService.getGeoDataForAddress(city, street, building);
     if (!geoData) {
       // Геокодер не смог (кончился лимит API) возвращаем null, чтобы заказ отменился
       return null;
     }
 
-    // Определяем статус
-    const status = this.randomChoice([
-      'Новый',
-      'Готовится',
-      'Передан курьеру',
-      'Доставляется',
-      'Доставлен',
-      'Отменен',
-    ]);
+    // Выбираем случайный ресторан из базы (с реальными id)
+    const selectedRestaurant = this.randomChoice(this.dbRestaurantsCache);
+
+    // Извлекаем город ресторана из адреса (первая часть до запятой)
+    const restaurantCity = selectedRestaurant.address.split(',')[0].trim();
+    const citiesMatch = restaurantCity.toLowerCase() === city.toLowerCase();
+
+    // Определяем статус с учётом совпадения городов
+    let status: string;
+    if (citiesMatch) {
+      // Города совпадают — любой статус
+      status = this.randomChoice([
+        'Новый',
+        'Готовится',
+        'Передан курьеру',
+        'Доставляется',
+        'Доставлен',
+        'Отменен',
+      ]);
+    } else {
+      // Города НЕ совпадают — «Доставлен»/«Доставляется» только как ошибка (2%)
+      if (Math.random() < 0.01) {
+        status = this.randomChoice(['Доставлен', 'Доставляется']);
+      } else {
+        status = this.randomChoice([
+          'Новый',
+          'Готовится',
+          'Передан курьеру',
+          'Отменен',
+        ]);
+      }
+    }
 
     // Генерируем дату заказа
     const orderDateObj = faker.date.recent();
@@ -393,8 +417,7 @@ export class DataVitrineService implements OnModuleInit {
       ]),
     };
 
-    // Выбираем случайный ресторан из статичного списка
-    const selectedRestaurant = this.randomChoice(restaurants);
+
 
     return {
       orderDate,
@@ -417,14 +440,14 @@ export class DataVitrineService implements OnModuleInit {
           intercom: `${faker.number.int({ min: 1, max: 500 })}#`,
           postalCode: faker.location.zipCode('######'),
           coordinates: {
-            lat: geoData.lat,
-            lon: geoData.lon,
+            lat: this.jitterCoordinate(parseFloat(geoData.lat), 0.027).toString(),
+            lon: this.jitterCoordinate(parseFloat(geoData.lon), 0.048).toString(),
           },
           deliveryTimeZone: geoData.timezone,
         },
       },
       restaurant: {
-        restaurantId: selectedRestaurant.restaurantId,
+        id: selectedRestaurant.id,
         brandName: selectedRestaurant.brandName,
         address: selectedRestaurant.address,
         inn: selectedRestaurant.inn,
@@ -481,6 +504,26 @@ export class DataVitrineService implements OnModuleInit {
     return choices[randomIndex];
   }
 
+  private buildRestaurantFingerprint(restaurant: {
+    brandName: string;
+    address: string;
+    inn: string;
+    kpp: string;
+  }): string {
+    return [
+      restaurant.brandName,
+      restaurant.address,
+      restaurant.inn,
+      restaurant.kpp,
+    ].join('|');
+  }
+
+  /** Смещает координату на случайную величину ±maxOffset (~2-3 км) */
+  private jitterCoordinate(value: number, maxOffset: number): number {
+    const offset = (Math.random() * 2 - 1) * maxOffset;
+    return parseFloat((value + offset).toFixed(6));
+  }
+
   // ─────────────────────────────────────────────────────
   // Запись сгенерированных заказов в PostgreSQL
   // ─────────────────────────────────────────────────────
@@ -503,10 +546,10 @@ export class DataVitrineService implements OnModuleInit {
           grandTotal: String(order.financialSummary.grandTotal),
           paymentMethod: order.financialSummary.paymentMethod,
 
-          // Связь с рестораном (через restaurantId)
+          // Связь с рестораном (через id)
           restaurant: {
             connect: {
-              restaurantId: order.restaurant.restaurantId,
+              id: order.restaurant.id,
             },
           },
 
@@ -615,7 +658,7 @@ export class DataVitrineService implements OnModuleInit {
 
               restaurant: {
                 connect: {
-                  restaurantId: order.restaurant.restaurantId,
+                  id: order.restaurant.id,
                 },
               },
 

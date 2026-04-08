@@ -9,20 +9,20 @@ datasource db {
   provider = "postgresql"
 }
 
-// ─────────────────────────────────────────────
+/// ─────────────────────────────────────────────
 // Ресторан (справочник, 39 фиксированных записей)
 // ─────────────────────────────────────────────
 model Restaurant {
-  restaurantId String @id // "9944" — фиксированный уникальный ID
-  brandName    String
-  legalEntity  String
-  address      String // полный адрес строкой
-  inn          String // ИНН (10 цифр)
-  kpp          String // КПП (9 цифр)
-  vatPercent   Int    @default(20)
-  start        String // "10:00:00" — время начала работы
-  end          String // "20:00:00" — время конца работы
-  timeZone     String // "Europe/Moscow"
+  id          Int    @id @default(autoincrement())
+  brandName   String
+  legalEntity String
+  address     String // полный адрес строкой
+  inn         String // ИНН (10 цифр)
+  kpp         String // КПП (9 цифр)
+  vatPercent  Int    @default(20)
+  start       String // "10:00:00" — время начала работы
+  end         String // "20:00:00" — время конца работы
+  timeZone    String // "Europe/Moscow"
 
   orders Order[]
 
@@ -55,8 +55,8 @@ model Order {
   customer   Customer @relation(fields: [customerId], references: [id])
 
   // Связь с рестораном
-  restaurantId String
-  restaurant   Restaurant @relation(fields: [restaurantId], references: [restaurantId])
+  restaurantId Int
+  restaurant   Restaurant @relation(fields: [restaurantId], references: [id])
 
   orderItems OrderItem[]
 
