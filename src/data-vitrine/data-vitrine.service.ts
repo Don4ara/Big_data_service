@@ -13,6 +13,11 @@ import {
 } from './mock-dictionaries';
 import { GeocodingService } from './geocoding.service';
 import { PrismaService } from '../prisma.service';
+import {
+  buildReviewRating,
+  getRestaurantDelayHoursChoices,
+  getRestaurantZeroDelayMinuteChoices,
+} from './review-rating';
 
 @Injectable()
 export class DataVitrineService implements OnModuleInit {
@@ -22,6 +27,14 @@ export class DataVitrineService implements OnModuleInit {
   private savedOrders: any[] = [];
   private static readonly MAX_IN_MEMORY = 500;
   private dbRestaurantsCache: any[] = [];
+  private dbWriteQueue: Promise<void> = Promise.resolve();
+  private queuedDbBatches = 0;
+  private isDbWriteActive = false;
+  private isGenerating = false;
+  private autoGenerationTimer: NodeJS.Timeout | null = null;
+  private autoGenerationBatchSize = 0;
+  private autoGenerationIntervalMs = 0;
+  private readonly maxQueuedDbBatches = parseInt(process.env.MAX_QUEUED_DB_BATCHES || '4', 10);
 
   constructor(
     private readonly geocodingService: GeocodingService,
@@ -39,18 +52,40 @@ export class DataVitrineService implements OnModuleInit {
   }
 
   private startAutoGeneration() {
-    const batchSize = parseInt(process.env.AUTO_GENERATE_BATCH_SIZE || '50', 10);
-    const intervalMs = parseInt(process.env.AUTO_GENERATE_INTERVAL || '5000', 10);
-    this.logger.log(`[Beast Mode] Запуск автоматической генерации: ${batchSize} заказов каждые ${intervalMs}мс`);
+    this.autoGenerationBatchSize = parseInt(process.env.AUTO_GENERATE_BATCH_SIZE || '50', 10);
+    this.autoGenerationIntervalMs = parseInt(process.env.AUTO_GENERATE_INTERVAL || '5000', 10);
+    this.logger.log(`[Beast Mode] Запуск автоматической генерации: ${this.autoGenerationBatchSize} заказов каждые ${this.autoGenerationIntervalMs}мс`);
+    this.scheduleNextAutoGeneration(0);
+  }
 
-    setInterval(async () => {
+  private scheduleNextAutoGeneration(delayMs: number) {
+    if (this.autoGenerationTimer) {
+      clearTimeout(this.autoGenerationTimer);
+    }
+
+    this.autoGenerationTimer = setTimeout(async () => {
+      if (this.isGenerating) {
+        this.scheduleNextAutoGeneration(this.autoGenerationIntervalMs);
+        return;
+      }
+
+      if (this.queuedDbBatches >= this.maxQueuedDbBatches) {
+        this.logger.warn(`⏸ [Авто-Воркер] Пауза генерации: DB queue=${this.queuedDbBatches}, лимит=${this.maxQueuedDbBatches}`);
+        this.scheduleNextAutoGeneration(this.autoGenerationIntervalMs);
+        return;
+      }
+
+      this.isGenerating = true;
       try {
-        await this.generateOrders(batchSize);
-        this.logger.log(`✅ [Авто-Воркер] Сгенерировано и сохранено ${batchSize} заказов.`);
+        await this.generateOrders(this.autoGenerationBatchSize);
+        this.logger.log(`✅ [Авто-Воркер] Сгенерировано и сохранено ${this.autoGenerationBatchSize} заказов.`);
       } catch (err) {
         this.logger.error('❌ Ошибка в автоматической генерации', err);
+      } finally {
+        this.isGenerating = false;
+        this.scheduleNextAutoGeneration(this.autoGenerationIntervalMs);
       }
-    }, intervalMs);
+    }, delayMs);
   }
 
   private async seedRestaurants() {
@@ -100,13 +135,12 @@ export class DataVitrineService implements OnModuleInit {
 
 
   async generateOrders(count: number): Promise<any[]> {
+    const startedAt = Date.now();
     this.logger.log(`🛠 [Воркер] Начинаю подготовку ${count} заказов (параллельно)...`);
 
-    // Запускаем генерацию всей пачки одновременно (геокодинг идёт параллельно)
     const promises = Array.from({ length: count }).map(() => this.generateSingleOrder());
     let newOrders = await Promise.all(promises);
 
-    // Фильтруем заказы, которые были отменены из-за ошибок геокодинга (достигнут лимит API)
     newOrders = newOrders.filter(order => order !== null);
 
     if (newOrders.length === 0) {
@@ -114,22 +148,34 @@ export class DataVitrineService implements OnModuleInit {
       return [];
     }
 
-    // Сохраняем в in-memory буфер (для фронтенда)
     this.savedOrders.push(...newOrders);
     if (this.savedOrders.length > DataVitrineService.MAX_IN_MEMORY) {
       this.savedOrders = this.savedOrders.slice(-DataVitrineService.MAX_IN_MEMORY);
     }
 
-    // ЖДЁМ записи в БД, чтобы данные точно попали в таблицу
-    try {
-      this.logger.log(`📤 [Воркер] Отправляю ${newOrders.length} заказов в базу данных...`);
-      await this.saveOrdersToDb(newOrders);
-      this.logger.log(`✅ [Воркер] Записано ${newOrders.length} заказов в БД!`);
-    } catch (err) {
-      this.logger.error('❌ Ошибка записи в БД', err);
-    }
+    this.enqueueDbWrite(newOrders);
 
+    this.logger.log(`⚙️ [Воркер] Батч ${newOrders.length}/${count} завершен за ${Date.now() - startedAt}мс`);
     return newOrders;
+  }
+
+  private enqueueDbWrite(orders: any[]) {
+    this.queuedDbBatches += 1;
+
+    this.dbWriteQueue = this.dbWriteQueue
+      .then(async () => {
+        this.isDbWriteActive = true;
+        this.logger.log(`📤 [Воркер] Фоновая запись ${orders.length} заказов в БД. Очередь: ${this.queuedDbBatches}`);
+        await this.saveOrdersToDb(orders);
+        this.logger.log(`✅ [Воркер] Фоновая запись ${orders.length} заказов завершена.`);
+      })
+      .catch((err) => {
+        this.logger.error('❌ Ошибка фоновой записи в БД', err);
+      })
+      .finally(() => {
+        this.queuedDbBatches = Math.max(0, this.queuedDbBatches - 1);
+        this.isDbWriteActive = this.queuedDbBatches > 0;
+      });
   }
 
   // Получить вообще все сохраненные заказы (из памяти)
@@ -352,25 +398,38 @@ export class DataVitrineService implements OnModuleInit {
       orderDateObj.getTime() + faker.number.int({ min: 1, max: 5 }) * 1000,
     ).toISOString();
 
-    // updatedAt = orderDate + случайный отрезок (0–5 часов + минуты)
-    const hoursOffset = faker.number.int({ min: 0, max: 5 });
-    const minutesOffset = faker.number.int({ min: 0, max: 59 });
+    // updatedAt = orderDate + случайный отрезок, а профиль ресторана меняется по временным окнам
+    const restaurantKey = this.buildRestaurantFingerprint(selectedRestaurant);
+    const restaurantProfileKey = `${restaurantKey}|${orderDateObj.toISOString().slice(0, 10)}`;
+    const hoursOffset = this.randomChoice(getRestaurantDelayHoursChoices(restaurantProfileKey));
+    const minutesOffset = hoursOffset === 0
+      ? this.randomChoice(getRestaurantZeroDelayMinuteChoices(restaurantProfileKey))
+      : faker.number.int({ min: 0, max: 59 });
     const updatedAt = new Date(
       orderDateObj.getTime() +
       hoursOffset * 60 * 60 * 1000 +
       minutesOffset * 60 * 1000,
     ).toISOString();
 
+    const orderOptions = {
+      numberOfCutlery: faker.number.int({ min: 0, max: 5 }),
+      requiresContactlessDelivery: faker.datatype.boolean(),
+      isEcoFriendlyPackaging: faker.datatype.boolean(),
+    };
+
     // Review: только при статусе «Доставлен», с 20% шансом всё равно null
     let review: any = null;
     if (status === 'Доставлен' && Math.random() > 0.2) {
-      // Базовый рейтинг: 3.0–5.0 с шагом 0.5
-      const baseRating = this.randomChoice([3.0, 3.5, 4.0, 4.5, 5.0]);
-      // Сдвиг по уровню обслуживания ресторана (от -2.0 до +0.5)
-      const serviceBias = this.getRestaurantServiceBias(selectedRestaurant.brandName);
-      // Штраф: каждый полный час опоздания → -0.5
-      const penalty = hoursOffset * 0.5;
-      const rating = Math.max(0.5, Math.min(5.0, baseRating + serviceBias - penalty));
+      const delayHours = hoursOffset + minutesOffset / 60;
+      const { rating } = buildReviewRating({
+        restaurantKey: restaurantProfileKey,
+        delayHours,
+        itemsCount: items.length,
+        requiresContactlessDelivery: orderOptions.requiresContactlessDelivery,
+        isEcoFriendlyPackaging: orderOptions.isEcoFriendlyPackaging,
+        randomChoice: this.randomChoice.bind(this),
+        randomFloat: Math.random,
+      });
       const comment = this.randomChoice(
         rating >= 3 ? positiveReviews : negativeReviews,
       );
@@ -464,11 +523,7 @@ export class DataVitrineService implements OnModuleInit {
       },
       orderContent: {
         items: spoiledItems,
-        options: {
-          numberOfCutlery: faker.number.int({ min: 0, max: 5 }),
-          requiresContactlessDelivery: faker.datatype.boolean(),
-          isEcoFriendlyPackaging: faker.datatype.boolean(),
-        },
+        options: orderOptions,
       },
       courier: {
         name: Math.random() < 0.7 ? this.randomChoice(courierNames) : faker.person.firstName(),
@@ -531,32 +586,6 @@ export class DataVitrineService implements OnModuleInit {
   private jitterCoordinate(value: number, maxOffset: number): number {
     const offset = (Math.random() * 2 - 1) * maxOffset;
     return parseFloat((value + offset).toFixed(6));
-  }
-
-  /**
-   * Детерминированный «уровень обслуживания» ресторана.
-   * По хэшу brandName возвращает сдвиг рейтинга (bias):
-   *
-   * Итоговый рейтинг: clamp(baseRating + bias - penalty, 0.5, 5.0)
-   *   baseRating ∈ [3.0, 3.5, 4.0, 4.5, 5.0] (медиана 4.0)
-   *   penalty = hoursOffset × 0.5 ∈ [0..2.5] (медиана ~1.25)
-   *
-   * Реальные медианы с учётом штрафа за время доставки:
-   *   +0.5  → премиум (медиана ~3.25)
-   *    0    → хороший (медиана ~2.75)
-   *   -0.5  → средний (медиана ~2.25)
-   *   -1.0  → ниже среднего (медиана ~1.75)
-   *   -1.5  → слабый (медиана ~1.25)
-   *   -2.0  → плохой (медиана ~0.5, clamp)
-   */
-  private getRestaurantServiceBias(brandName: string): number {
-    let hash = 0;
-    for (const char of brandName) {
-      hash = ((hash << 5) - hash) + char.charCodeAt(0);
-      hash |= 0; // int32
-    }
-    const biasLevels = [-2.0, -1.5, -1.0, -0.5, 0, 0.5];
-    return biasLevels[Math.abs(hash) % biasLevels.length];
   }
 
   // ─────────────────────────────────────────────────────
