@@ -1,5 +1,5 @@
 export type ReviewRatingInput = {
-  restaurantKey: string;
+  quality: number;
   delayHours: number;
   itemsCount: number;
   requiresContactlessDelivery: boolean;
@@ -12,15 +12,6 @@ function clampRating(value: number): number {
   return Math.max(0.5, Math.min(5.0, value));
 }
 
-function hashString(value: string): number {
-  let hash = 0;
-  for (const char of value) {
-    hash = ((hash << 5) - hash) + char.charCodeAt(0);
-    hash |= 0;
-  }
-  return Math.abs(hash);
-}
-
 function roundToQuarter(value: number): number {
   return Math.round(value * 4) / 4;
 }
@@ -29,54 +20,28 @@ function lerp(min: number, max: number, t: number): number {
   return min + (max - min) * t;
 }
 
-export function getRestaurantQuality(restaurantKey: string): number {
-  return (hashString(restaurantKey) % 1000) / 999;
+function clampUnit(value: number): number {
+  return Math.max(0, Math.min(1, value));
 }
 
-export function getRestaurantLateness(restaurantKey: string): number {
-  return (Math.floor(hashString(`${restaurantKey}:late`) / 7) % 1000) / 999;
-}
+export function getDelayHoursChoices(lateness: number): number[] {
+  const normalizedLateness = clampUnit(lateness);
 
-function getRestaurantScenarioDrift(restaurantKey: string): number {
-  return (Math.floor(hashString(`${restaurantKey}:drift`) / 11) % 1000) / 999;
-}
-
-function getEffectiveRestaurantQuality(restaurantKey: string): number {
-  const baseQuality = getRestaurantQuality(restaurantKey);
-  const drift = getRestaurantScenarioDrift(restaurantKey);
-  const quality = baseQuality + (drift - 0.5) * 0.9;
-  return Math.max(0, Math.min(1, quality));
-}
-
-function getEffectiveRestaurantLateness(restaurantKey: string): number {
-  const baseLateness = getRestaurantLateness(restaurantKey);
-  const drift = getRestaurantScenarioDrift(`${restaurantKey}:late-drift`);
-  const lateness = baseLateness + (drift - 0.5) * 0.8;
-  return Math.max(0, Math.min(1, lateness));
-}
-
-export function buildRestaurantScenarioKey(restaurantKey: string, batchSeed: string): string {
-  return `${restaurantKey}|${batchSeed}`;
-}
-
-export function getRestaurantDelayHoursChoices(restaurantKey: string): number[] {
-  const lateness = getEffectiveRestaurantLateness(restaurantKey);
-
-  if (lateness >= 0.9) return [0, 1, 2, 3, 4, 5, 5];
-  if (lateness >= 0.75) return [0, 1, 1, 2, 2, 3, 4, 5];
-  if (lateness >= 0.55) return [0, 0, 1, 1, 2, 2, 3, 4];
-  if (lateness >= 0.35) return [0, 0, 0, 1, 1, 2, 2, 3];
-  if (lateness >= 0.15) return [0, 0, 0, 0, 1, 1, 2, 3];
+  if (normalizedLateness >= 0.9) return [0, 1, 2, 3, 4, 5, 5];
+  if (normalizedLateness >= 0.75) return [0, 1, 1, 2, 2, 3, 4, 5];
+  if (normalizedLateness >= 0.55) return [0, 0, 1, 1, 2, 2, 3, 4];
+  if (normalizedLateness >= 0.35) return [0, 0, 0, 1, 1, 2, 2, 3];
+  if (normalizedLateness >= 0.15) return [0, 0, 0, 0, 1, 1, 2, 3];
   return [0, 0, 0, 0, 0, 1, 1, 2];
 }
 
-export function getRestaurantZeroDelayMinuteChoices(restaurantKey: string): number[] {
-  const lateness = getEffectiveRestaurantLateness(restaurantKey);
+export function getZeroDelayMinuteChoices(lateness: number): number[] {
+  const normalizedLateness = clampUnit(lateness);
 
-  if (lateness >= 0.85) return [10, 15, 20, 25, 30, 35, 40, 45];
-  if (lateness >= 0.65) return [5, 10, 15, 20, 25, 30, 35, 40];
-  if (lateness >= 0.45) return [0, 5, 10, 15, 20, 25, 30, 35];
-  if (lateness >= 0.2) return [0, 5, 10, 15, 20, 25, 30];
+  if (normalizedLateness >= 0.85) return [10, 15, 20, 25, 30, 35, 40, 45];
+  if (normalizedLateness >= 0.65) return [5, 10, 15, 20, 25, 30, 35, 40];
+  if (normalizedLateness >= 0.45) return [0, 5, 10, 15, 20, 25, 30, 35];
+  if (normalizedLateness >= 0.2) return [0, 5, 10, 15, 20, 25, 30];
   return [0, 0, 5, 5, 10, 10, 15, 20];
 }
 
@@ -202,7 +167,7 @@ function getIncidentPenalty(
 }
 
 export function buildReviewRating(input: ReviewRatingInput): { rating: number } {
-  const quality = getEffectiveRestaurantQuality(input.restaurantKey);
+  const quality = clampUnit(input.quality);
   const baseScore = getBaseScore(quality, input.randomChoice);
   const restaurantFactor = getRestaurantFactor(quality, input.randomChoice);
   const courierFactor = getCourierFactor(quality, input.randomChoice);
@@ -213,15 +178,17 @@ export function buildReviewRating(input: ReviewRatingInput): { rating: number } 
   const delayPenalty = getReviewDelayPenalty(input.delayHours);
 
   return {
-    rating: clampRating(
-      baseScore
-      + restaurantFactor
-      + courierFactor
-      + complexityFactor
-      + randomNoise
-      + excellenceBonus
-      - delayPenalty
-      - incidentPenalty,
+    rating: roundToQuarter(
+      clampRating(
+        baseScore
+        + restaurantFactor
+        + courierFactor
+        + complexityFactor
+        + randomNoise
+        + excellenceBonus
+        - delayPenalty
+        - incidentPenalty,
+      ),
     ),
   };
 }

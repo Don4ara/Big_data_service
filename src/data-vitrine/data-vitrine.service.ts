@@ -15,9 +15,17 @@ import { GeocodingService } from './geocoding.service';
 import { PrismaService } from '../prisma.service';
 import {
   buildReviewRating,
-  getRestaurantDelayHoursChoices,
-  getRestaurantZeroDelayMinuteChoices,
+  getDelayHoursChoices,
+  getZeroDelayMinuteChoices,
 } from './review-rating';
+
+type RestaurantRuntimeProfile = {
+  baselineQuality: number;
+  baselineLateness: number;
+  quality: number;
+  lateness: number;
+  nextRefreshBatch: number;
+};
 
 @Injectable()
 export class DataVitrineService implements OnModuleInit {
@@ -35,6 +43,17 @@ export class DataVitrineService implements OnModuleInit {
   private autoGenerationBatchSize = 0;
   private autoGenerationIntervalMs = 0;
   private readonly maxQueuedDbBatches = parseInt(process.env.MAX_QUEUED_DB_BATCHES || '4', 10);
+  private readonly marketProfileSeed =
+    process.env.MARKET_PROFILE_SEED?.trim() || new Date().toISOString().slice(0, 16);
+  private generationBatchCounter = 0;
+  private seasonProfileCounter = 0;
+  private activeGenerationProfileSeed: string | null = null;
+  private batchesUntilProfileRotate = 0;
+  private deliveredQuotaCarry = 0;
+  private deliveringQuotaCarry = 0;
+  private marketQualityBias = 0;
+  private marketLatenessBias = 0;
+  private restaurantRuntimeProfiles = new Map<number, RestaurantRuntimeProfile>();
 
   constructor(
     private readonly geocodingService: GeocodingService,
@@ -44,6 +63,7 @@ export class DataVitrineService implements OnModuleInit {
   // При старте модуля — засеять фиксированные рестораны (upsert)
   async onModuleInit() {
     await this.seedRestaurants();
+    this.logger.log(`[Market Profile] seed=${this.marketProfileSeed}`);
 
     // Запуск фонового генератора (для Docker-воркеров)
     if (process.env.AUTO_GENERATE === 'true') {
@@ -136,9 +156,12 @@ export class DataVitrineService implements OnModuleInit {
 
   async generateOrders(count: number): Promise<any[]> {
     const startedAt = Date.now();
+    this.generationBatchCounter += 1;
     this.logger.log(`🛠 [Воркер] Начинаю подготовку ${count} заказов (параллельно)...`);
 
-    const promises = Array.from({ length: count }).map(() => this.generateSingleOrder());
+    this.buildGenerationProfileSeed();
+    const forcedStatuses = this.buildForcedStatuses(count);
+    const promises = forcedStatuses.map((forcedStatus) => this.generateSingleOrder(forcedStatus));
     let newOrders = await Promise.all(promises);
 
     newOrders = newOrders.filter(order => order !== null);
@@ -285,7 +308,9 @@ export class DataVitrineService implements OnModuleInit {
     return `${adj} ${noun.toLowerCase()}`;
   }
 
-  private async generateSingleOrder() {
+  private async generateSingleOrder(
+    forcedStatus: 'Доставлен' | 'Доставляется' | null = null,
+  ) {
     // Предварительно считаем суммы
     const itemsCount = faker.number.int({ min: 1, max: 7 });
     let subtotal = 0;
@@ -338,8 +363,13 @@ export class DataVitrineService implements OnModuleInit {
       ).toFixed(2),
     );
 
-    // Генерируем адрес покупателя
-    const city = faker.location.city();
+    // Выбираем случайный ресторан из базы (с реальными id)
+    const selectedRestaurant = this.randomChoice(this.dbRestaurantsCache);
+    const runtimeProfile = this.getRestaurantRuntimeProfile(selectedRestaurant.id);
+    const restaurantCity = selectedRestaurant.address.split(',')[0].trim();
+
+    // Для квот "Доставлен" / "Доставляется" принудительно делаем реалистичное совпадение городов
+    const city = forcedStatus ? restaurantCity : faker.location.city();
     const street = faker.location.street();
     const building = `${faker.number.int({ min: 1, max: 150 })}/${faker.number.int({ min: 1, max: 10 })}`;
 
@@ -350,37 +380,29 @@ export class DataVitrineService implements OnModuleInit {
       return null;
     }
 
-    // Выбираем случайный ресторан из базы (с реальными id)
-    const selectedRestaurant = this.randomChoice(this.dbRestaurantsCache);
-
-    // Извлекаем город ресторана из адреса (первая часть до запятой)
-    const restaurantCity = selectedRestaurant.address.split(',')[0].trim();
     const citiesMatch = restaurantCity.toLowerCase() === city.toLowerCase();
 
-    // Определяем статус с учётом совпадения городов
+    // Определяем статус так, чтобы "Доставлен" занимал около 10%,
+    // а "Доставляется" около 3% всех заказов
     let status: string;
-    if (citiesMatch) {
-      // Города совпадают — любой статус
+    if (forcedStatus) {
+      status = forcedStatus;
+    } else if (citiesMatch) {
+      // Города совпадают — можно дойти до активной стадии, но без квотных статусов
       status = this.randomChoice([
         'Новый',
         'Готовится',
         'Передан курьеру',
-        'Доставляется',
-        'Доставлен',
         'Отменен',
       ]);
     } else {
-      // Города НЕ совпадают — «Доставлен»/«Доставляется» только как ошибка (3%)
-      if (Math.random() < 0.03) {
-        status = this.randomChoice(['Доставлен', 'Доставляется']);
-      } else {
-        status = this.randomChoice([
-          'Новый',
-          'Готовится',
-          'Передан курьеру',
-          'Отменен',
-        ]);
-      }
+      // Города НЕ совпадают — заказ не должен выглядеть как успешно завершенный
+      status = this.randomChoice([
+        'Новый',
+        'Готовится',
+        'Передан курьеру',
+        'Отменен',
+      ]);
     }
 
     // Генерируем дату заказа
@@ -398,12 +420,11 @@ export class DataVitrineService implements OnModuleInit {
       orderDateObj.getTime() + faker.number.int({ min: 1, max: 5 }) * 1000,
     ).toISOString();
 
-    // updatedAt = orderDate + случайный отрезок, а профиль ресторана меняется по временным окнам
-    const restaurantKey = this.buildRestaurantFingerprint(selectedRestaurant);
-    const restaurantProfileKey = `${restaurantKey}|${orderDateObj.toISOString().slice(0, 10)}`;
-    const hoursOffset = this.randomChoice(getRestaurantDelayHoursChoices(restaurantProfileKey));
+    // updatedAt = orderDate + случайный отрезок. Задержка зависит от текущего
+    // временного состояния ресторана, а не от вечного фиксированного отпечатка.
+    const hoursOffset = this.randomChoice(getDelayHoursChoices(runtimeProfile.lateness));
     const minutesOffset = hoursOffset === 0
-      ? this.randomChoice(getRestaurantZeroDelayMinuteChoices(restaurantProfileKey))
+      ? this.randomChoice(getZeroDelayMinuteChoices(runtimeProfile.lateness))
       : faker.number.int({ min: 0, max: 59 });
     const updatedAt = new Date(
       orderDateObj.getTime() +
@@ -422,7 +443,7 @@ export class DataVitrineService implements OnModuleInit {
     if (status === 'Доставлен' && Math.random() > 0.2) {
       const delayHours = hoursOffset + minutesOffset / 60;
       const { rating } = buildReviewRating({
-        restaurantKey: restaurantProfileKey,
+        quality: runtimeProfile.quality,
         delayHours,
         itemsCount: items.length,
         requiresContactlessDelivery: orderOptions.requiresContactlessDelivery,
@@ -568,18 +589,147 @@ export class DataVitrineService implements OnModuleInit {
     return choices[randomIndex];
   }
 
-  private buildRestaurantFingerprint(restaurant: {
-    brandName: string;
-    address: string;
-    inn: string;
-    kpp: string;
-  }): string {
-    return [
-      restaurant.brandName,
-      restaurant.address,
-      restaurant.inn,
-      restaurant.kpp,
-    ].join('|');
+  private randomFloat(min: number, max: number): number {
+    return min + Math.random() * (max - min);
+  }
+
+  private hashString(value: string): number {
+    let hash = 0;
+    for (const char of value) {
+      hash = ((hash << 5) - hash) + char.charCodeAt(0);
+      hash |= 0;
+    }
+    return Math.abs(hash);
+  }
+
+  private hashToUnit(value: string): number {
+    return (this.hashString(value) % 10000) / 9999;
+  }
+
+  private clampUnit(value: number): number {
+    return Math.max(0, Math.min(1, value));
+  }
+
+  private getRestaurantBaselines(restaurantId: number): {
+    quality: number;
+    lateness: number;
+  } {
+    const qualitySeed = this.hashToUnit(`${this.marketProfileSeed}|restaurant:${restaurantId}|quality`);
+    const qualityJitter = (this.hashToUnit(`${this.marketProfileSeed}|restaurant:${restaurantId}|quality:jitter`) - 0.5) * 0.16;
+
+    let baseQuality = 0.56;
+    if (qualitySeed < 0.08) baseQuality = 0.2;
+    else if (qualitySeed < 0.2) baseQuality = 0.3;
+    else if (qualitySeed < 0.38) baseQuality = 0.42;
+    else if (qualitySeed < 0.62) baseQuality = 0.54;
+    else if (qualitySeed < 0.8) baseQuality = 0.66;
+    else if (qualitySeed < 0.92) baseQuality = 0.78;
+    else baseQuality = 0.9;
+
+    const baselineQuality = this.clampUnit(baseQuality + qualityJitter);
+    const latenessNoise = (this.hashToUnit(`${this.marketProfileSeed}|restaurant:${restaurantId}|lateness`) - 0.5) * 0.32;
+    const baselineLateness = this.clampUnit(0.68 - baselineQuality * 0.5 + latenessNoise);
+
+    return {
+      quality: baselineQuality,
+      lateness: baselineLateness,
+    };
+  }
+
+  private getRestaurantRuntimeProfile(restaurantId: number): RestaurantRuntimeProfile {
+    let profile = this.restaurantRuntimeProfiles.get(restaurantId);
+
+    if (!profile) {
+      const baselines = this.getRestaurantBaselines(restaurantId);
+
+      profile = {
+        baselineQuality: baselines.quality,
+        baselineLateness: baselines.lateness,
+        quality: this.clampUnit(
+          baselines.quality +
+          this.marketQualityBias * 0.18 +
+          this.randomFloat(-0.08, 0.08),
+        ),
+        lateness: this.clampUnit(
+          baselines.lateness +
+          this.marketLatenessBias * 0.18 +
+          this.randomFloat(-0.1, 0.1),
+        ),
+        nextRefreshBatch: this.generationBatchCounter + faker.number.int({ min: 4, max: 9 }),
+      };
+
+      this.restaurantRuntimeProfiles.set(restaurantId, profile);
+      return profile;
+    }
+
+    if (this.generationBatchCounter >= profile.nextRefreshBatch) {
+      const marketQualityTarget = this.clampUnit(
+        profile.baselineQuality +
+        this.marketQualityBias * 0.22 +
+        this.randomFloat(-0.12, 0.12),
+      );
+      const marketLatenessTarget = this.clampUnit(
+        profile.baselineLateness +
+        this.marketLatenessBias * 0.24 +
+        (0.5 - profile.quality) * 0.18 +
+        this.randomFloat(-0.14, 0.14),
+      );
+
+      profile.quality = this.clampUnit(
+        profile.quality * 0.8 +
+        marketQualityTarget * 0.2,
+      );
+      profile.lateness = this.clampUnit(
+        profile.lateness * 0.76 +
+        marketLatenessTarget * 0.24,
+      );
+      profile.nextRefreshBatch =
+        this.generationBatchCounter + faker.number.int({ min: 4, max: 9 });
+    }
+
+    return profile;
+  }
+
+  private buildGenerationProfileSeed(): string {
+    if (!this.activeGenerationProfileSeed || this.batchesUntilProfileRotate <= 0) {
+      this.seasonProfileCounter += 1;
+      const seasonLength = faker.number.int({ min: 6, max: 12 });
+      this.activeGenerationProfileSeed = `season-${this.seasonProfileCounter}`;
+      this.batchesUntilProfileRotate = seasonLength;
+      this.marketQualityBias = this.randomFloat(-0.12, 0.12);
+      this.marketLatenessBias = this.randomFloat(-0.12, 0.12);
+      this.logger.log(
+        `[Market Season] ${this.activeGenerationProfileSeed} for ${seasonLength} batches (qualityBias=${this.marketQualityBias.toFixed(2)}, latenessBias=${this.marketLatenessBias.toFixed(2)})`,
+      );
+    }
+
+    const seed = this.activeGenerationProfileSeed;
+    this.batchesUntilProfileRotate -= 1;
+    return seed;
+  }
+
+  private buildForcedStatuses(count: number): Array<'Доставлен' | 'Доставляется' | null> {
+    const rawDelivered = count * 0.1 + this.deliveredQuotaCarry;
+    const deliveredCount = Math.max(0, Math.min(count, Math.floor(rawDelivered)));
+    this.deliveredQuotaCarry = rawDelivered - deliveredCount;
+
+    const remainingAfterDelivered = Math.max(0, count - deliveredCount);
+    const rawDelivering = count * 0.03 + this.deliveringQuotaCarry;
+    const deliveringCount = Math.max(0, Math.min(remainingAfterDelivered, Math.floor(rawDelivering)));
+    this.deliveringQuotaCarry = rawDelivering - deliveringCount;
+
+    const statuses: Array<'Доставлен' | 'Доставляется' | null> = [
+      ...Array.from({ length: deliveredCount }, () => 'Доставлен' as const),
+      ...Array.from({ length: deliveringCount }, () => 'Доставляется' as const),
+      ...Array.from({ length: count - deliveredCount - deliveringCount }, () => null),
+    ];
+
+    for (let i = statuses.length - 1; i > 0; i -= 1) {
+      const swapIndex = Math.floor(Math.random() * (i + 1));
+      [statuses[i], statuses[swapIndex]] = [statuses[swapIndex], statuses[i]];
+    }
+
+    return statuses;
   }
 
   /** Смещает координату на случайную величину ±maxOffset (~2-3 км) */
