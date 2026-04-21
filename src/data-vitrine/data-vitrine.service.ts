@@ -10,22 +10,40 @@ import {
   negativeReviews,
   customerNames,
   courierNames,
-} from './mock-dictionaries';
-import { GeocodingService } from './geocoding.service';
+} from './generation/mock-dictionaries';
+import { GeocodingService } from './geo/geocoding.service';
 import { PrismaService } from '../prisma.service';
+import {
+  DELIVERY_FEE_OPTIONS,
+  MONEY_SUFFIXES,
+  PAYMENT_METHODS,
+  SERVICE_FEE_OPTIONS,
+  SPECIAL_INSTRUCTIONS,
+  TRANSPORT_TYPES,
+} from './generation/generation.constants';
+import { buildOrderCreateData } from './persistence/order-persistence';
+import {
+  createRestaurantRuntimeProfile,
+  refreshRestaurantRuntimeProfile,
+  RestaurantRuntimeProfile,
+} from './market/restaurant-profile';
 import {
   buildReviewRating,
   getDelayHoursChoices,
   getZeroDelayMinuteChoices,
-} from './review-rating';
-
-type RestaurantRuntimeProfile = {
-  baselineQuality: number;
-  baselineLateness: number;
-  quality: number;
-  lateness: number;
-  nextRefreshBatch: number;
-};
+} from './review/review-rating';
+import {
+  buildStatusPlan,
+  buildStatusQuotaProfile,
+  OrderStatus,
+  shouldMatchRestaurantCity,
+  StatusQuotaProfile,
+} from './generation/status-planner';
+import { createDeterministicRandom } from './market/deterministic-random';
+import { SharedMarketStateService } from './market/shared-market-state.service';
+import { SharedMarketSeasonState } from './market/market-season';
+import { buildMarketSeedScope } from './market/market-scope';
+import { eachInChunks, mapWithConcurrency } from './generation/async-batch';
 
 @Injectable()
 export class DataVitrineService implements OnModuleInit {
@@ -43,27 +61,52 @@ export class DataVitrineService implements OnModuleInit {
   private autoGenerationBatchSize = 0;
   private autoGenerationIntervalMs = 0;
   private readonly maxQueuedDbBatches = parseInt(process.env.MAX_QUEUED_DB_BATCHES || '4', 10);
-  private readonly marketProfileSeed =
-    process.env.MARKET_PROFILE_SEED?.trim() || new Date().toISOString().slice(0, 16);
+  private readonly orderGenerationConcurrency = parseInt(
+    process.env.ORDER_GENERATION_CONCURRENCY || '24',
+    10,
+  );
+  private readonly dbWriteChunkSize = parseInt(
+    process.env.DB_WRITE_CHUNK_SIZE || '20',
+    10,
+  );
+  private readonly marketSeedScope = buildMarketSeedScope({
+    marketProfileSeed: process.env.MARKET_PROFILE_SEED,
+    marketRunSeed: process.env.MARKET_RUN_SEED,
+  });
+  private readonly marketProfileSeed = this.marketSeedScope.marketProfileSeed;
+  private readonly marketRunSeed = this.marketSeedScope.marketRunSeed;
+  private readonly sharedMarketSeed = this.marketSeedScope.sharedStateSeed;
   private generationBatchCounter = 0;
-  private seasonProfileCounter = 0;
+  private currentGlobalBatchNumber = 0;
+  private currentSeasonStartedAtBatch = 0;
   private activeGenerationProfileSeed: string | null = null;
-  private batchesUntilProfileRotate = 0;
   private deliveredQuotaCarry = 0;
   private deliveringQuotaCarry = 0;
   private marketQualityBias = 0;
   private marketLatenessBias = 0;
+  private marketDeliveredRateBias = 0;
+  private marketDeliveringRateBias = 0;
+  private restaurantCityById = new Map<number, string>();
   private restaurantRuntimeProfiles = new Map<number, RestaurantRuntimeProfile>();
+  private statusQuotaProfile: StatusQuotaProfile | null = null;
 
   constructor(
     private readonly geocodingService: GeocodingService,
     private readonly prisma: PrismaService,
+    private readonly sharedMarketStateService: SharedMarketStateService,
   ) { }
 
   // При старте модуля — засеять фиксированные рестораны (upsert)
   async onModuleInit() {
     await this.seedRestaurants();
-    this.logger.log(`[Market Profile] seed=${this.marketProfileSeed}`);
+    this.logger.log(
+      `[Market Profile] profileSeed=${this.marketProfileSeed}, runSeed=${this.marketRunSeed ?? 'none'}, sharedScope=${this.sharedMarketSeed}`,
+    );
+    if (!this.marketRunSeed) {
+      this.logger.warn(
+        'MARKET_RUN_SEED is not set. Shared Redis market state will be reused across restarts while MARKET_PROFILE_SEED stays the same.',
+      );
+    }
 
     // Запуск фонового генератора (для Docker-воркеров)
     if (process.env.AUTO_GENERATE === 'true') {
@@ -113,6 +156,7 @@ export class DataVitrineService implements OnModuleInit {
     if (existingCount >= restaurants.length) {
       // База уже заполнена — только загружаем кэш
       this.dbRestaurantsCache = await this.prisma.restaurant.findMany();
+      this.hydrateRestaurantCityCache(this.dbRestaurantsCache);
       this.logger.log(`Кэш ресторанов загружен (${this.dbRestaurantsCache.length} шт.)`);
       return;
     }
@@ -150,7 +194,17 @@ export class DataVitrineService implements OnModuleInit {
 
     // Загружаем рестораны из БД в кэш для генерации заказов
     this.dbRestaurantsCache = await this.prisma.restaurant.findMany();
+    this.hydrateRestaurantCityCache(this.dbRestaurantsCache);
     this.logger.log(`Загружено ${this.dbRestaurantsCache.length} ресторанов в кэш`);
+  }
+
+  private hydrateRestaurantCityCache(restaurantsFromDb: Array<{ id: number; address: string }>) {
+    this.restaurantCityById = new Map(
+      restaurantsFromDb.map((restaurant) => [
+        restaurant.id,
+        restaurant.address.split(',')[0].trim(),
+      ]),
+    );
   }
 
 
@@ -159,10 +213,22 @@ export class DataVitrineService implements OnModuleInit {
     this.generationBatchCounter += 1;
     this.logger.log(`🛠 [Воркер] Начинаю подготовку ${count} заказов (параллельно)...`);
 
-    this.buildGenerationProfileSeed();
-    const forcedStatuses = this.buildForcedStatuses(count);
-    const promises = forcedStatuses.map((forcedStatus) => this.generateSingleOrder(forcedStatus));
-    let newOrders = await Promise.all(promises);
+    await this.syncGenerationProfileSeed();
+    const quotaResult = buildStatusPlan({
+      count,
+      quotaProfile: this.getStatusQuotaProfile(),
+      deliveredQuotaCarry: this.deliveredQuotaCarry,
+      deliveringQuotaCarry: this.deliveringQuotaCarry,
+      roll: Math.random,
+    });
+    this.deliveredQuotaCarry = quotaResult.deliveredQuotaCarry;
+    this.deliveringQuotaCarry = quotaResult.deliveringQuotaCarry;
+    const plannedStatuses = quotaResult.statuses;
+    let newOrders = await mapWithConcurrency(
+      plannedStatuses,
+      Math.min(plannedStatuses.length, this.orderGenerationConcurrency),
+      (plannedStatus) => this.generateSingleOrder(plannedStatus),
+    );
 
     newOrders = newOrders.filter(order => order !== null);
 
@@ -308,43 +374,30 @@ export class DataVitrineService implements OnModuleInit {
     return `${adj} ${noun.toLowerCase()}`;
   }
 
-  private async generateSingleOrder(
-    forcedStatus: 'Доставлен' | 'Доставляется' | null = null,
-  ) {
+  private async generateSingleOrder(status: OrderStatus) {
     // Предварительно считаем суммы
-    const itemsCount = faker.number.int({ min: 1, max: 7 });
+    const itemsCount = this.randomInt(1, 7);
     let subtotal = 0;
 
-    // Генерируем товары для заказа
-    const items = Array.from({ length: itemsCount }).map(() => {
-      const price = parseFloat(
-        faker.finance.amount({ min: 100, max: 1500, dec: 2 }),
-      );
-      const qty = faker.number.int({ min: 1, max: 7 });
+    // Генерируем товары для заказа без лишних промежуточных массивов
+    const items = new Array(itemsCount);
+    for (let index = 0; index < itemsCount; index += 1) {
+      const price = this.randomMoney(100, 1500);
+      const qty = this.randomInt(1, 7);
       subtotal += price * qty;
 
-      return {
+      items[index] = {
         name: this.generateDishName(),
         quantity: qty,
         pricePerUnit: price,
-        specialInstructions: this.randomChoice([
-          'Без лука, пожалуйста',
-          'Поострее',
-          'Не класть салфетки',
-          'Меньше льда',
-          'Соус отдельно',
-          'Приборы на 3 персоны',
-          null,
-          null,
-          null,
-        ]),
+        specialInstructions: this.randomChoice(SPECIAL_INSTRUCTIONS),
         category: this.randomChoice(dishCategories),
       };
-    });
+    }
 
     const taxAmount = parseFloat((subtotal * 0.2).toFixed(2));
-    const deliveryFee = this.randomChoice([100, 150, 200, 0, 300, 49]);
-    const serviceFee = this.randomChoice([29, 39, 49, 0]);
+    const deliveryFee = this.randomChoice(DELIVERY_FEE_OPTIONS);
+    const serviceFee = this.randomChoice(SERVICE_FEE_OPTIONS);
     const discountAmount = this.randomChoice([
       0,
       0,
@@ -366,12 +419,14 @@ export class DataVitrineService implements OnModuleInit {
     // Выбираем случайный ресторан из базы (с реальными id)
     const selectedRestaurant = this.randomChoice(this.dbRestaurantsCache);
     const runtimeProfile = this.getRestaurantRuntimeProfile(selectedRestaurant.id);
-    const restaurantCity = selectedRestaurant.address.split(',')[0].trim();
+    const restaurantCity =
+      this.restaurantCityById.get(selectedRestaurant.id) ??
+      selectedRestaurant.address.split(',')[0].trim();
 
-    // Для квот "Доставлен" / "Доставляется" принудительно делаем реалистичное совпадение городов
-    const city = forcedStatus ? restaurantCity : faker.location.city();
+    const shouldUseRestaurantCity = shouldMatchRestaurantCity(status, Math.random());
+    const city = shouldUseRestaurantCity ? restaurantCity : faker.location.city();
     const street = faker.location.street();
-    const building = `${faker.number.int({ min: 1, max: 150 })}/${faker.number.int({ min: 1, max: 10 })}`;
+    const building = `${this.randomInt(1, 150)}/${this.randomInt(1, 10)}`;
 
     // Получаем координаты и таймзону по адресу через Geoapify API
     const geoData = await this.geocodingService.getGeoDataForAddress(city, street, building);
@@ -380,44 +435,15 @@ export class DataVitrineService implements OnModuleInit {
       return null;
     }
 
-    const citiesMatch = restaurantCity.toLowerCase() === city.toLowerCase();
-
-    // Определяем статус так, чтобы "Доставлен" занимал около 10%,
-    // а "Доставляется" около 3% всех заказов
-    let status: string;
-    if (forcedStatus) {
-      status = forcedStatus;
-    } else if (citiesMatch) {
-      // Города совпадают — можно дойти до активной стадии, но без квотных статусов
-      status = this.randomChoice([
-        'Новый',
-        'Готовится',
-        'Передан курьеру',
-        'Отменен',
-      ]);
-    } else {
-      // Города НЕ совпадают — заказ не должен выглядеть как успешно завершенный
-      status = this.randomChoice([
-        'Новый',
-        'Готовится',
-        'Передан курьеру',
-        'Отменен',
-      ]);
-    }
-
     // Генерируем дату заказа
     const orderDateObj = faker.date.recent();
 
     // orderDate в случайном формате
-    const orderDate = this.randomChoice([
-      orderDateObj.toISOString(),                              // ISO 8601
-      Math.floor(orderDateObj.getTime() / 1000),               // Unix timestamp
-      orderDateObj.toLocaleDateString('ru-RU'),                 // dd.mm.yyyy
-    ]);
+    const orderDate = this.formatOrderDate(orderDateObj);
 
     // createdAt = orderDate + пару секунд (попадание записи в БД)
     const createdAt = new Date(
-      orderDateObj.getTime() + faker.number.int({ min: 1, max: 5 }) * 1000,
+      orderDateObj.getTime() + this.randomInt(1, 5) * 1000,
     ).toISOString();
 
     // updatedAt = orderDate + случайный отрезок. Задержка зависит от текущего
@@ -425,7 +451,7 @@ export class DataVitrineService implements OnModuleInit {
     const hoursOffset = this.randomChoice(getDelayHoursChoices(runtimeProfile.lateness));
     const minutesOffset = hoursOffset === 0
       ? this.randomChoice(getZeroDelayMinuteChoices(runtimeProfile.lateness))
-      : faker.number.int({ min: 0, max: 59 });
+      : this.randomInt(0, 59);
     const updatedAt = new Date(
       orderDateObj.getTime() +
       hoursOffset * 60 * 60 * 1000 +
@@ -433,7 +459,7 @@ export class DataVitrineService implements OnModuleInit {
     ).toISOString();
 
     const orderOptions = {
-      numberOfCutlery: faker.number.int({ min: 0, max: 5 }),
+      numberOfCutlery: this.randomInt(0, 5),
       requiresContactlessDelivery: faker.datatype.boolean(),
       isEcoFriendlyPackaging: faker.datatype.boolean(),
     };
@@ -448,7 +474,7 @@ export class DataVitrineService implements OnModuleInit {
         itemsCount: items.length,
         requiresContactlessDelivery: orderOptions.requiresContactlessDelivery,
         isEcoFriendlyPackaging: orderOptions.isEcoFriendlyPackaging,
-        randomChoice: this.randomChoice.bind(this),
+        randomChoice: this.randomChoice,
         randomFloat: Math.random,
       });
       const comment = this.randomChoice(
@@ -461,49 +487,22 @@ export class DataVitrineService implements OnModuleInit {
     // Делается ПОСЛЕ всех расчетов, чтобы не сломать математику
     // ---------------------------------------------------------
 
-    // Хелпер для порчи денег (шанс 2% на каждую ошибку)
-    const spoilMoney = (amount: number): string | number => {
-      let result: string | number = amount;
-      if (Math.random() < 0.02) {
-        result = result.toString().replace('.', ',');
-      }
-      if (Math.random() < 0.02) {
-        const suffix = this.randomChoice(['руб.', 'р.', 'рублей', '₽']);
-        result = `${result} ${suffix}`;
-      }
-      return result;
-    };
-
-    // Хелпер для порчи количества (шанс 3%)
-    const spoilQuantity = (qty: number): string | number => {
-      if (Math.random() < 0.02) {
-        return `${qty} шт.`;
-      }
-      return qty;
-    };
-
     // Применяем порчу к товарам
     const spoiledItems = items.map(item => ({
       ...item,
-      quantity: spoilQuantity(item.quantity) as number,
-      pricePerUnit: spoilMoney(item.pricePerUnit) as number,
+      quantity: this.spoilQuantity(item.quantity) as number,
+      pricePerUnit: this.spoilMoney(item.pricePerUnit) as number,
     }));
 
     // Применяем порчу к финансам
     const spoiledFinancialSummary = {
-      subtotal: spoilMoney(parseFloat(subtotal.toFixed(2))) as number,
-      taxAmount: spoilMoney(taxAmount) as number,
-      deliveryFee: spoilMoney(deliveryFee) as number,
-      serviceFee: spoilMoney(serviceFee) as number,
-      discountAmount: spoilMoney(discountAmount) as number,
-      grandTotal: spoilMoney(grandTotal) as number,
-      paymentMethod: this.randomChoice([
-        'CARD_ONLINE',
-        'CASH',
-        'APPLE_PAY',
-        'GOOGLE_PAY',
-        'SBP',
-      ]),
+      subtotal: this.spoilMoney(parseFloat(subtotal.toFixed(2))) as number,
+      taxAmount: this.spoilMoney(taxAmount) as number,
+      deliveryFee: this.spoilMoney(deliveryFee) as number,
+      serviceFee: this.spoilMoney(serviceFee) as number,
+      discountAmount: this.spoilMoney(discountAmount) as number,
+      grandTotal: this.spoilMoney(grandTotal) as number,
+      paymentMethod: this.randomChoice(PAYMENT_METHODS),
     };
 
 
@@ -514,19 +513,19 @@ export class DataVitrineService implements OnModuleInit {
       customer: {
         fullName: Math.random() < 0.7 ? this.randomChoice(customerNames) : faker.person.fullName(),
         phone: this.randomChoice([
-          `+7-${faker.string.numeric(3)}-${faker.string.numeric(3)}-${faker.string.numeric(2)}-${faker.string.numeric(2)}`,
-          `8${faker.string.numeric(10)}`,
-          `+7${faker.string.numeric(10)}`,
+          `+7-${this.randomDigits(3)}-${this.randomDigits(3)}-${this.randomDigits(2)}-${this.randomDigits(2)}`,
+          `8${this.randomDigits(10)}`,
+          `+7${this.randomDigits(10)}`,
         ]),
         email: faker.internet.email(),
         deliveryAddress: {
           city,
           street,
           building,
-          apartment: faker.number.int({ min: 1, max: 500 }).toString(),
-          entrance: faker.number.int({ min: 1, max: 15 }).toString(),
-          floor: faker.number.int({ min: 1, max: 30 }),
-          intercom: `${faker.number.int({ min: 1, max: 500 })}#`,
+          apartment: this.randomInt(1, 500).toString(),
+          entrance: this.randomInt(1, 15).toString(),
+          floor: this.randomInt(1, 30),
+          intercom: `${this.randomInt(1, 500)}#`,
           postalCode: faker.location.zipCode('######'),
           coordinates: {
             lat: this.jitterCoordinate(parseFloat(geoData.lat), 0.027).toString(),
@@ -548,33 +547,13 @@ export class DataVitrineService implements OnModuleInit {
       },
       courier: {
         name: Math.random() < 0.7 ? this.randomChoice(courierNames) : faker.person.firstName(),
-        transportType: this.randomChoice([
-          'bicycle',
-          'car',
-          'walking',
-          'scooter',
-        ]),
+        transportType: this.randomChoice(TRANSPORT_TYPES),
         currentLocation: {
           lat: faker.location.latitude(),
           lon: faker.location.longitude(),
         },
-        phone: `+7${faker.string.numeric(10)}`,
-        estimatedArrival: this.randomChoice([
-          faker.date.soon().toLocaleTimeString('ru-RU', {
-            hour: '2-digit',
-            minute: '2-digit',
-          }),
-          faker.date.soon().toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: true,
-          }),
-          faker.date.soon().toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          }),
-        ]),
+        phone: `+7${this.randomDigits(10)}`,
+        estimatedArrival: this.generateEstimatedArrival(),
       },
       financialSummary: spoiledFinancialSummary,
       status,
@@ -584,152 +563,193 @@ export class DataVitrineService implements OnModuleInit {
     };
   }
 
-  private randomChoice<T>(choices: T[]): T {
+  private randomChoice<T>(choices: readonly T[]): T {
     const randomIndex = Math.floor(Math.random() * choices.length);
     return choices[randomIndex];
+  }
+
+  private randomInt(min: number, max: number): number {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  private randomMoney(min: number, max: number): number {
+    return Math.round((min + Math.random() * (max - min)) * 100) / 100;
+  }
+
+  private randomDigits(length: number): string {
+    let result = '';
+
+    for (let index = 0; index < length; index += 1) {
+      result += this.randomInt(0, 9).toString();
+    }
+
+    return result;
   }
 
   private randomFloat(min: number, max: number): number {
     return min + Math.random() * (max - min);
   }
 
-  private hashString(value: string): number {
-    let hash = 0;
-    for (const char of value) {
-      hash = ((hash << 5) - hash) + char.charCodeAt(0);
-      hash |= 0;
+  private formatOrderDate(date: Date): string | number {
+    const formatRoll = Math.random();
+
+    if (formatRoll < 0.34) {
+      return date.toISOString();
     }
-    return Math.abs(hash);
+
+    if (formatRoll < 0.67) {
+      return Math.floor(date.getTime() / 1000);
+    }
+
+    return `${this.padTwoDigits(date.getDate())}.${this.padTwoDigits(date.getMonth() + 1)}.${date.getFullYear()}`;
   }
 
-  private hashToUnit(value: string): number {
-    return (this.hashString(value) % 10000) / 9999;
+  private generateEstimatedArrival(): string {
+    const arrivalDate = new Date(Date.now() + this.randomInt(5, 120) * 60 * 1000);
+    const hours = arrivalDate.getHours();
+    const minutes = arrivalDate.getMinutes();
+
+    if (Math.random() < 0.5) {
+      const meridiem = hours >= 12 ? 'PM' : 'AM';
+      const twelveHour = hours % 12 || 12;
+      return `${this.padTwoDigits(twelveHour)}:${this.padTwoDigits(minutes)} ${meridiem}`;
+    }
+
+    return `${this.padTwoDigits(hours)}:${this.padTwoDigits(minutes)}`;
   }
 
-  private clampUnit(value: number): number {
-    return Math.max(0, Math.min(1, value));
+  private padTwoDigits(value: number): string {
+    return value.toString().padStart(2, '0');
   }
 
-  private getRestaurantBaselines(restaurantId: number): {
-    quality: number;
-    lateness: number;
-  } {
-    const qualitySeed = this.hashToUnit(`${this.marketProfileSeed}|restaurant:${restaurantId}|quality`);
-    const qualityJitter = (this.hashToUnit(`${this.marketProfileSeed}|restaurant:${restaurantId}|quality:jitter`) - 0.5) * 0.16;
+  private spoilMoney(amount: number): string | number {
+    let result: string | number = amount;
 
-    let baseQuality = 0.56;
-    if (qualitySeed < 0.08) baseQuality = 0.2;
-    else if (qualitySeed < 0.2) baseQuality = 0.3;
-    else if (qualitySeed < 0.38) baseQuality = 0.42;
-    else if (qualitySeed < 0.62) baseQuality = 0.54;
-    else if (qualitySeed < 0.8) baseQuality = 0.66;
-    else if (qualitySeed < 0.92) baseQuality = 0.78;
-    else baseQuality = 0.9;
+    if (Math.random() < 0.02) {
+      result = result.toString().replace('.', ',');
+    }
 
-    const baselineQuality = this.clampUnit(baseQuality + qualityJitter);
-    const latenessNoise = (this.hashToUnit(`${this.marketProfileSeed}|restaurant:${restaurantId}|lateness`) - 0.5) * 0.32;
-    const baselineLateness = this.clampUnit(0.68 - baselineQuality * 0.5 + latenessNoise);
+    if (Math.random() < 0.02) {
+      result = `${result} ${this.randomChoice(MONEY_SUFFIXES)}`;
+    }
 
-    return {
-      quality: baselineQuality,
-      lateness: baselineLateness,
-    };
+    return result;
+  }
+
+  private spoilQuantity(qty: number): string | number {
+    if (Math.random() < 0.02) {
+      return `${qty} шт.`;
+    }
+
+    return qty;
   }
 
   private getRestaurantRuntimeProfile(restaurantId: number): RestaurantRuntimeProfile {
+    const seasonKey = this.getCurrentRestaurantSeasonKey();
     let profile = this.restaurantRuntimeProfiles.get(restaurantId);
 
-    if (!profile) {
-      const baselines = this.getRestaurantBaselines(restaurantId);
-
-      profile = {
-        baselineQuality: baselines.quality,
-        baselineLateness: baselines.lateness,
-        quality: this.clampUnit(
-          baselines.quality +
-          this.marketQualityBias * 0.18 +
-          this.randomFloat(-0.08, 0.08),
-        ),
-        lateness: this.clampUnit(
-          baselines.lateness +
-          this.marketLatenessBias * 0.18 +
-          this.randomFloat(-0.1, 0.1),
-        ),
-        nextRefreshBatch: this.generationBatchCounter + faker.number.int({ min: 4, max: 9 }),
-      };
-
-      this.restaurantRuntimeProfiles.set(restaurantId, profile);
-      return profile;
+    if (!profile || profile.seasonKey !== seasonKey) {
+      const createRandomFns = this.createSeededRandomFns(
+        `${seasonKey}|restaurant:${restaurantId}|create`,
+      );
+      profile = createRestaurantRuntimeProfile({
+        seasonKey,
+        restaurantId,
+        marketQualityBias: this.marketQualityBias,
+        marketLatenessBias: this.marketLatenessBias,
+        scheduleAnchorBatch: this.currentSeasonStartedAtBatch,
+        randomFloat: createRandomFns.randomFloat,
+        randomInt: createRandomFns.randomInt,
+      });
     }
 
-    if (this.generationBatchCounter >= profile.nextRefreshBatch) {
-      const marketQualityTarget = this.clampUnit(
-        profile.baselineQuality +
-        this.marketQualityBias * 0.22 +
-        this.randomFloat(-0.12, 0.12),
+    while (this.currentGlobalBatchNumber >= profile.nextRefreshBatch) {
+      const refreshAnchorBatch = profile.nextRefreshBatch;
+      const refreshRandomFns = this.createSeededRandomFns(
+        `${seasonKey}|restaurant:${restaurantId}|refresh|${refreshAnchorBatch}`,
       );
-      const marketLatenessTarget = this.clampUnit(
-        profile.baselineLateness +
-        this.marketLatenessBias * 0.24 +
-        (0.5 - profile.quality) * 0.18 +
-        this.randomFloat(-0.14, 0.14),
-      );
-
-      profile.quality = this.clampUnit(
-        profile.quality * 0.8 +
-        marketQualityTarget * 0.2,
-      );
-      profile.lateness = this.clampUnit(
-        profile.lateness * 0.76 +
-        marketLatenessTarget * 0.24,
-      );
-      profile.nextRefreshBatch =
-        this.generationBatchCounter + faker.number.int({ min: 4, max: 9 });
+      profile = refreshRestaurantRuntimeProfile({
+        profile,
+        marketQualityBias: this.marketQualityBias,
+        marketLatenessBias: this.marketLatenessBias,
+        scheduleAnchorBatch: refreshAnchorBatch,
+        randomFloat: refreshRandomFns.randomFloat,
+        randomInt: refreshRandomFns.randomInt,
+      });
     }
 
+    this.restaurantRuntimeProfiles.set(restaurantId, profile);
     return profile;
   }
 
-  private buildGenerationProfileSeed(): string {
-    if (!this.activeGenerationProfileSeed || this.batchesUntilProfileRotate <= 0) {
-      this.seasonProfileCounter += 1;
-      const seasonLength = faker.number.int({ min: 6, max: 12 });
-      this.activeGenerationProfileSeed = `season-${this.seasonProfileCounter}`;
-      this.batchesUntilProfileRotate = seasonLength;
-      this.marketQualityBias = this.randomFloat(-0.12, 0.12);
-      this.marketLatenessBias = this.randomFloat(-0.12, 0.12);
+  private getCurrentRestaurantSeasonKey(): string {
+    return `${this.sharedMarketSeed}|${this.activeGenerationProfileSeed ?? 'season-0'}`;
+  }
+
+  private getStatusQuotaProfile(): StatusQuotaProfile {
+    const quotaRandomFns = this.createSeededRandomFns(
+      `${this.getCurrentRestaurantSeasonKey()}|status|${this.currentGlobalBatchNumber}`,
+    );
+    const result = buildStatusQuotaProfile({
+      existingProfile: this.statusQuotaProfile,
+      generationBatchCounter: this.currentGlobalBatchNumber,
+      marketDeliveredRateBias: this.marketDeliveredRateBias,
+      marketDeliveringRateBias: this.marketDeliveringRateBias,
+      marketQualityBias: this.marketQualityBias,
+      marketLatenessBias: this.marketLatenessBias,
+      randomFloat: quotaRandomFns.randomFloat,
+      randomInt: quotaRandomFns.randomInt,
+    });
+    this.statusQuotaProfile = result.profile;
+
+    if (result.refreshed) {
       this.logger.log(
-        `[Market Season] ${this.activeGenerationProfileSeed} for ${seasonLength} batches (qualityBias=${this.marketQualityBias.toFixed(2)}, latenessBias=${this.marketLatenessBias.toFixed(2)})`,
+        `[Status Quota] delivered=${(result.profile.deliveredRate * 100).toFixed(2)}%, delivering=${(result.profile.deliveringRate * 100).toFixed(2)}%, new=${(result.profile.newShare * 100).toFixed(1)}%, cooking=${(result.profile.cookingShare * 100).toFixed(1)}%, handed=${(result.profile.handedOffShare * 100).toFixed(1)}%, cancelled=${(result.profile.cancelledShare * 100).toFixed(1)}% until batch ${result.profile.nextRefreshBatch - 1}`,
       );
     }
 
-    const seed = this.activeGenerationProfileSeed;
-    this.batchesUntilProfileRotate -= 1;
-    return seed;
+    return this.statusQuotaProfile;
   }
 
-  private buildForcedStatuses(count: number): Array<'Доставлен' | 'Доставляется' | null> {
-    const rawDelivered = count * 0.1 + this.deliveredQuotaCarry;
-    const deliveredCount = Math.max(0, Math.min(count, Math.floor(rawDelivered)));
-    this.deliveredQuotaCarry = rawDelivered - deliveredCount;
+  private async syncGenerationProfileSeed(): Promise<string> {
+    const previousSeasonKey = this.activeGenerationProfileSeed;
+    const batchContext = await this.sharedMarketStateService.beginBatch(
+      this.sharedMarketSeed,
+    );
 
-    const remainingAfterDelivered = Math.max(0, count - deliveredCount);
-    const rawDelivering = count * 0.03 + this.deliveringQuotaCarry;
-    const deliveringCount = Math.max(0, Math.min(remainingAfterDelivered, Math.floor(rawDelivering)));
-    this.deliveringQuotaCarry = rawDelivering - deliveringCount;
+    this.currentGlobalBatchNumber = batchContext.globalBatchNumber;
+    this.applySharedSeasonState(batchContext.seasonState);
 
-    const statuses: Array<'Доставлен' | 'Доставляется' | null> = [
-      ...Array.from({ length: deliveredCount }, () => 'Доставлен' as const),
-      ...Array.from({ length: deliveringCount }, () => 'Доставляется' as const),
-      ...Array.from({ length: count - deliveredCount - deliveringCount }, () => null),
-    ];
-
-    for (let i = statuses.length - 1; i > 0; i -= 1) {
-      const swapIndex = Math.floor(Math.random() * (i + 1));
-      [statuses[i], statuses[swapIndex]] = [statuses[swapIndex], statuses[i]];
+    if (previousSeasonKey !== this.activeGenerationProfileSeed) {
+      this.restaurantRuntimeProfiles.clear();
+      this.statusQuotaProfile = null;
+      this.logger.log(
+        `[Market Season] ${this.activeGenerationProfileSeed} from shared state at global batch ${this.currentGlobalBatchNumber} (qualityBias=${this.marketQualityBias.toFixed(2)}, latenessBias=${this.marketLatenessBias.toFixed(2)}, deliveredBias=${(this.marketDeliveredRateBias * 100).toFixed(2)}pp, deliveringBias=${(this.marketDeliveringRateBias * 100).toFixed(2)}pp)`,
+      );
     }
 
-    return statuses;
+    return this.activeGenerationProfileSeed!;
+  }
+
+  private applySharedSeasonState(seasonState: SharedMarketSeasonState): void {
+    this.activeGenerationProfileSeed = seasonState.seasonKey;
+    this.currentSeasonStartedAtBatch = seasonState.startedAtGlobalBatch;
+    this.marketQualityBias = seasonState.marketQualityBias;
+    this.marketLatenessBias = seasonState.marketLatenessBias;
+    this.marketDeliveredRateBias = seasonState.marketDeliveredRateBias;
+    this.marketDeliveringRateBias = seasonState.marketDeliveringRateBias;
+  }
+
+  private createSeededRandomFns(seed: string): {
+    randomFloat: (min: number, max: number) => number;
+    randomInt: (min: number, max: number) => number;
+  } {
+    const random = createDeterministicRandom(seed);
+
+    return {
+      randomFloat: (min: number, max: number) => random.nextFloat(min, max),
+      randomInt: (min: number, max: number) => random.nextInt(min, max),
+    };
   }
 
   /** Смещает координату на случайную величину ±maxOffset (~2-3 км) */
@@ -742,207 +762,21 @@ export class DataVitrineService implements OnModuleInit {
   // Запись сгенерированных заказов в PostgreSQL
   // ─────────────────────────────────────────────────────
   private async saveOrdersToDb(orders: any[]): Promise<void> {
-    const operations = orders.map((order) =>
-      this.prisma.order.create({
-        data: {
-          orderDate: String(order.orderDate),
-          currency: order.currency,
-          status: order.status,
-          createdAt: order.createdAt,
-          updatedAt: order.updatedAt,
-
-          // Финансовые поля (теперь прямо в orders)
-          subtotal: String(order.financialSummary.subtotal),
-          taxAmount: String(order.financialSummary.taxAmount),
-          deliveryFee: String(order.financialSummary.deliveryFee),
-          serviceFee: String(order.financialSummary.serviceFee),
-          discountAmount: String(order.financialSummary.discountAmount),
-          grandTotal: String(order.financialSummary.grandTotal),
-          paymentMethod: order.financialSummary.paymentMethod,
-
-          // Связь с рестораном (через id)
-          restaurant: {
-            connect: {
-              id: order.restaurant.id,
-            },
-          },
-
-          // Создание покупателя
-          customer: {
-            create: {
-              fullName: order.customer.fullName,
-              phone: order.customer.phone,
-              email: order.customer.email,
-              deliveryAddress: {
-                create: {
-                  city: order.customer.deliveryAddress.city,
-                  street: order.customer.deliveryAddress.street,
-                  building: order.customer.deliveryAddress.building,
-                  apartment: order.customer.deliveryAddress.apartment,
-                  entrance: order.customer.deliveryAddress.entrance,
-                  floor: order.customer.deliveryAddress.floor,
-                  intercom: order.customer.deliveryAddress.intercom,
-                  postalCode: order.customer.deliveryAddress.postalCode,
-                  deliveryTimeZone: order.customer.deliveryAddress.deliveryTimeZone,
-                  coordinates: {
-                    create: {
-                      lat: String(order.customer.deliveryAddress.coordinates.lat),
-                      lon: String(order.customer.deliveryAddress.coordinates.lon),
-                    },
-                  },
-                },
-              },
-            },
-          },
-
-          orderItems: {
-            create: order.orderContent.items.map((item: any) => ({
-              name: item.name,
-              quantity: String(item.quantity),
-              pricePerUnit: String(item.pricePerUnit),
-              category: item.category,
-              specialInstructions: item.specialInstructions ?? null,
-            })),
-          },
-
-          orderOptions: {
-            create: {
-              numberOfCutlery: order.orderContent.options.numberOfCutlery,
-              requiresContactlessDelivery: order.orderContent.options.requiresContactlessDelivery,
-              isEcoFriendlyPackaging: order.orderContent.options.isEcoFriendlyPackaging,
-            },
-          },
-
-          courier: {
-            create: {
-              name: order.courier.name,
-              transportType: order.courier.transportType,
-              phone: order.courier.phone,
-              estimatedArrival: order.courier.estimatedArrival,
-              location: {
-                create: {
-                  lat: parseFloat(order.courier.currentLocation.lat),
-                  lon: parseFloat(order.courier.currentLocation.lon),
-                },
-              },
-            },
-          },
-
-          ...(order.review
-            ? {
-              review: {
-                create: {
-                  rating: order.review.rating,
-                  comment: order.review.comment,
-                },
-              },
-            }
-            : {}),
-        },
-      }),
-    );
-
     try {
       // Для сложных связанных таблиц $transaction за 5 секунд успевает редко (даже 50 штук).
       // Так как это моки, нам не нужна ACID транзакция на весь батч, пишем порциями:
-      const chunkSize = 20;
-      for (let i = 0; i < operations.length; i += chunkSize) {
-        await Promise.all(operations.slice(i, i + chunkSize));
-      }
+      await eachInChunks(orders, this.dbWriteChunkSize, async (order) => {
+        await this.prisma.order.create({
+          data: buildOrderCreateData(order),
+        });
+      });
     } catch (err) {
       this.logger.error('Ошибка батчевой записи заказов в БД, пробуем поштучно...', err);
       // Fallback: если хоть один запрос упал, идем поштучно чтобы не терять весь батч
       for (const order of orders) {
         try {
           await this.prisma.order.create({
-            data: {
-              orderDate: String(order.orderDate),
-              currency: order.currency,
-              status: order.status,
-              createdAt: order.createdAt,
-              updatedAt: order.updatedAt,
-
-              subtotal: String(order.financialSummary.subtotal),
-              taxAmount: String(order.financialSummary.taxAmount),
-              deliveryFee: String(order.financialSummary.deliveryFee),
-              serviceFee: String(order.financialSummary.serviceFee),
-              discountAmount: String(order.financialSummary.discountAmount),
-              grandTotal: String(order.financialSummary.grandTotal),
-              paymentMethod: order.financialSummary.paymentMethod,
-
-              restaurant: {
-                connect: {
-                  id: order.restaurant.id,
-                },
-              },
-
-              customer: {
-                create: {
-                  fullName: order.customer.fullName,
-                  phone: order.customer.phone,
-                  email: order.customer.email,
-                  deliveryAddress: {
-                    create: {
-                      city: order.customer.deliveryAddress.city,
-                      street: order.customer.deliveryAddress.street,
-                      building: order.customer.deliveryAddress.building,
-                      apartment: order.customer.deliveryAddress.apartment,
-                      entrance: order.customer.deliveryAddress.entrance,
-                      floor: order.customer.deliveryAddress.floor,
-                      intercom: order.customer.deliveryAddress.intercom,
-                      postalCode: order.customer.deliveryAddress.postalCode,
-                      deliveryTimeZone: order.customer.deliveryAddress.deliveryTimeZone,
-                      coordinates: {
-                        create: {
-                          lat: String(order.customer.deliveryAddress.coordinates.lat),
-                          lon: String(order.customer.deliveryAddress.coordinates.lon),
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-              orderItems: {
-                create: order.orderContent.items.map((item: any) => ({
-                  name: item.name,
-                  quantity: String(item.quantity),
-                  pricePerUnit: String(item.pricePerUnit),
-                  category: item.category,
-                  specialInstructions: item.specialInstructions ?? null,
-                })),
-              },
-              orderOptions: {
-                create: {
-                  numberOfCutlery: order.orderContent.options.numberOfCutlery,
-                  requiresContactlessDelivery: order.orderContent.options.requiresContactlessDelivery,
-                  isEcoFriendlyPackaging: order.orderContent.options.isEcoFriendlyPackaging,
-                },
-              },
-              courier: {
-                create: {
-                  name: order.courier.name,
-                  transportType: order.courier.transportType,
-                  phone: order.courier.phone,
-                  estimatedArrival: order.courier.estimatedArrival,
-                  location: {
-                    create: {
-                      lat: parseFloat(order.courier.currentLocation.lat),
-                      lon: parseFloat(order.courier.currentLocation.lon),
-                    },
-                  },
-                },
-              },
-              ...(order.review
-                ? {
-                  review: {
-                    create: {
-                      rating: order.review.rating,
-                      comment: order.review.comment,
-                    },
-                  },
-                }
-                : {}),
-            },
+            data: buildOrderCreateData(order),
           });
         } catch (singleErr) {
           this.logger.error(`Ошибка записи заказа`, singleErr);
