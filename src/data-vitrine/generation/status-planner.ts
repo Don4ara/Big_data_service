@@ -142,7 +142,8 @@ export function buildStatusPlan(input: {
 
   const remainingAfterDelivered = Math.max(0, input.count - deliveredCount);
   const rawDelivering =
-    input.count * input.quotaProfile.deliveringRate + input.deliveringQuotaCarry;
+    input.count * input.quotaProfile.deliveringRate +
+    input.deliveringQuotaCarry;
   const deliveringCount = Math.max(
     0,
     Math.min(remainingAfterDelivered, Math.floor(rawDelivering)),

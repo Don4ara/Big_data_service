@@ -151,30 +151,34 @@ describe('review-rating', () => {
   it('keeps top and bottom restaurant medians far from the center', () => {
     const topChoice = createCyclingChoice();
     const topFloat = createCyclingFloat();
-    const topRatings = Array.from({ length: 61 }, () =>
-      buildReviewRating({
-        quality: 0.97,
-        delayHours: 0.25,
-        itemsCount: 2,
-        requiresContactlessDelivery: false,
-        isEcoFriendlyPackaging: false,
-        randomChoice: topChoice,
-        randomFloat: topFloat,
-      }).rating,
+    const topRatings = Array.from(
+      { length: 61 },
+      () =>
+        buildReviewRating({
+          quality: 0.97,
+          delayHours: 0.25,
+          itemsCount: 2,
+          requiresContactlessDelivery: false,
+          isEcoFriendlyPackaging: false,
+          randomChoice: topChoice,
+          randomFloat: topFloat,
+        }).rating,
     );
 
     const weakChoice = createCyclingChoice();
     const weakFloat = createCyclingFloat();
-    const weakRatings = Array.from({ length: 61 }, () =>
-      buildReviewRating({
-        quality: 0.03,
-        delayHours: 2.5,
-        itemsCount: 6,
-        requiresContactlessDelivery: true,
-        isEcoFriendlyPackaging: true,
-        randomChoice: weakChoice,
-        randomFloat: weakFloat,
-      }).rating,
+    const weakRatings = Array.from(
+      { length: 61 },
+      () =>
+        buildReviewRating({
+          quality: 0.03,
+          delayHours: 2.5,
+          itemsCount: 6,
+          requiresContactlessDelivery: true,
+          isEcoFriendlyPackaging: true,
+          randomChoice: weakChoice,
+          randomFloat: weakFloat,
+        }).rating,
     );
 
     expect(getMedian(topRatings)).toBeGreaterThanOrEqual(4.25);
@@ -184,16 +188,18 @@ describe('review-rating', () => {
   it('keeps mid-tier restaurants above the floor under ordinary delays', () => {
     const midChoice = createCyclingChoice();
     const midFloat = createCyclingFloat();
-    const midRatings = Array.from({ length: 61 }, () =>
-      buildReviewRating({
-        quality: 0.58,
-        delayHours: 1.5,
-        itemsCount: 3,
-        requiresContactlessDelivery: false,
-        isEcoFriendlyPackaging: false,
-        randomChoice: midChoice,
-        randomFloat: midFloat,
-      }).rating,
+    const midRatings = Array.from(
+      { length: 61 },
+      () =>
+        buildReviewRating({
+          quality: 0.58,
+          delayHours: 1.5,
+          itemsCount: 3,
+          requiresContactlessDelivery: false,
+          isEcoFriendlyPackaging: false,
+          randomChoice: midChoice,
+          randomFloat: midFloat,
+        }).rating,
     );
 
     expect(getMedian(midRatings)).toBeGreaterThanOrEqual(2);
@@ -202,16 +208,18 @@ describe('review-rating', () => {
   it('lets excellent restaurants sustain a high average score', () => {
     const topChoice = createCyclingChoice();
     const topFloat = createCyclingFloat();
-    const topRatings = Array.from({ length: 80 }, (_, index) =>
-      buildReviewRating({
-        quality: 0.97,
-        delayHours: index % 6 === 0 ? 1 : 0.25,
-        itemsCount: (index % 3) + 1,
-        requiresContactlessDelivery: false,
-        isEcoFriendlyPackaging: false,
-        randomChoice: topChoice,
-        randomFloat: topFloat,
-      }).rating,
+    const topRatings = Array.from(
+      { length: 80 },
+      (_, index) =>
+        buildReviewRating({
+          quality: 0.97,
+          delayHours: index % 6 === 0 ? 1 : 0.25,
+          itemsCount: (index % 3) + 1,
+          requiresContactlessDelivery: false,
+          isEcoFriendlyPackaging: false,
+          randomChoice: topChoice,
+          randomFloat: topFloat,
+        }).rating,
     );
 
     expect(getAverage(topRatings)).toBeGreaterThanOrEqual(4.25);
@@ -221,16 +229,18 @@ describe('review-rating', () => {
   it('lets premium near-perfect deliveries reach 5 under mixed randomness', () => {
     const premiumChoice = createCyclingChoice();
     const premiumFloat = createCyclingFloat();
-    const ratings = Array.from({ length: 40 }, () =>
-      buildReviewRating({
-        quality: 0.95,
-        delayHours: 0.2,
-        itemsCount: 2,
-        requiresContactlessDelivery: false,
-        isEcoFriendlyPackaging: false,
-        randomChoice: premiumChoice,
-        randomFloat: premiumFloat,
-      }).rating,
+    const ratings = Array.from(
+      { length: 40 },
+      () =>
+        buildReviewRating({
+          quality: 0.95,
+          delayHours: 0.2,
+          itemsCount: 2,
+          requiresContactlessDelivery: false,
+          isEcoFriendlyPackaging: false,
+          randomChoice: premiumChoice,
+          randomFloat: premiumFloat,
+        }).rating,
     );
 
     expect(Math.max(...ratings)).toBe(5);
@@ -241,16 +251,18 @@ describe('review-rating', () => {
   it('keeps elite mixed deliveries close to five stars on long runs', () => {
     const eliteChoice = createCyclingChoice();
     const eliteFloat = createCyclingFloat();
-    const ratings = Array.from({ length: 120 }, (_, index) =>
-      buildReviewRating({
-        quality: 0.982,
-        delayHours: index % 10 === 0 ? 0.6 : index % 4 === 0 ? 0.35 : 0.15,
-        itemsCount: index % 6 === 0 ? 5 : (index % 3) + 1,
-        requiresContactlessDelivery: index % 7 === 0,
-        isEcoFriendlyPackaging: index % 8 === 0,
-        randomChoice: eliteChoice,
-        randomFloat: eliteFloat,
-      }).rating,
+    const ratings = Array.from(
+      { length: 120 },
+      (_, index) =>
+        buildReviewRating({
+          quality: 0.982,
+          delayHours: index % 10 === 0 ? 0.6 : index % 4 === 0 ? 0.35 : 0.15,
+          itemsCount: index % 6 === 0 ? 5 : (index % 3) + 1,
+          requiresContactlessDelivery: index % 7 === 0,
+          isEcoFriendlyPackaging: index % 8 === 0,
+          randomChoice: eliteChoice,
+          randomFloat: eliteFloat,
+        }).rating,
     );
 
     expect(Math.max(...ratings)).toBe(5);
@@ -293,12 +305,14 @@ describe('review-rating', () => {
     ].map((scenario) => {
       const randomChoice = createCyclingChoice();
       const randomFloat = createCyclingFloat();
-      const ratings = Array.from({ length: 80 }, () =>
-        buildReviewRating({
-          ...scenario.input,
-          randomChoice,
-          randomFloat,
-        }).rating,
+      const ratings = Array.from(
+        { length: 80 },
+        () =>
+          buildReviewRating({
+            ...scenario.input,
+            randomChoice,
+            randomFloat,
+          }).rating,
       );
 
       return {

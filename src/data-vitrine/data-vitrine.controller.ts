@@ -15,7 +15,7 @@ import { switchMap, map } from 'rxjs/operators';
 
 @Controller('data-vitrine')
 export class DataVitrineController {
-  constructor(private readonly dataVitrineService: DataVitrineService) { }
+  constructor(private readonly dataVitrineService: DataVitrineService) {}
 
   // 1. Сгенерировать новые заказы и запомнить их (разово)
   @Get('generate')
@@ -38,9 +38,12 @@ export class DataVitrineController {
         const randomCount = Math.floor(Math.random() * 3) + 1;
         return from(this.dataVitrineService.generateOrders(randomCount));
       }),
-      map((newOrders) => ({
-        data: newOrders,
-      } as MessageEvent)),
+      map(
+        (newOrders) =>
+          ({
+            data: newOrders,
+          }) as MessageEvent,
+      ),
     );
   }
 
@@ -54,7 +57,9 @@ export class DataVitrineController {
 
   private async antiScrapeGuard(ip: string) {
     // 1. Искусственная случайная задержка (от 100 до 600 мс)
-    await new Promise(resolve => setTimeout(resolve, Math.random() * 500 + 100));
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.random() * 500 + 100),
+    );
 
     // 2. Rate-limiter (Максимум 5 запросов за 10 секунд)
     const now = Date.now();
@@ -66,15 +71,18 @@ export class DataVitrineController {
     }
 
     let logs = this.requestCounts.get(ip) || [];
-    logs = logs.filter(time => now - time < windowMs);
+    logs = logs.filter((time) => now - time < windowMs);
     logs.push(now);
     this.requestCounts.set(ip, logs);
 
     if (logs.length > maxRequests) {
-      throw new HttpException({
-        error: 'CAPTCHA_REQUIRED',
-        message: 'Аномальная активность. Подтвердите, что вы не робот.',
-      }, 429);
+      throw new HttpException(
+        {
+          error: 'CAPTCHA_REQUIRED',
+          message: 'Аномальная активность. Подтвердите, что вы не робот.',
+        },
+        429,
+      );
     }
   }
 
@@ -99,7 +107,13 @@ export class DataVitrineController {
 
     const pageNum = Math.max(1, parseInt(page || '1', 10));
     const limitNum = Math.min(100, Math.max(1, parseInt(limit || '50', 10)));
-    return this.dataVitrineService.getOrdersPaginated(pageNum, limitNum, search || undefined, status || undefined, payment || undefined);
+    return this.dataVitrineService.getOrdersPaginated(
+      pageNum,
+      limitNum,
+      search || undefined,
+      status || undefined,
+      payment || undefined,
+    );
   }
 
   // 5. Добавить свой собственный заказ вручную

@@ -118,7 +118,13 @@ export class SharedMarketStateService {
 
     const lockKey = this.getRotationLockKey(marketProfileSeed);
     const lockValue = `${process.pid}:${Date.now()}`;
-    const lockAcquired = await this.redis.set(lockKey, lockValue, 'PX', 5000, 'NX');
+    const lockAcquired = await this.redis.set(
+      lockKey,
+      lockValue,
+      'PX',
+      5000,
+      'NX',
+    );
 
     if (lockAcquired) {
       const currentState = await this.readSeasonState(marketProfileSeed);
@@ -130,7 +136,10 @@ export class SharedMarketStateService {
         return currentState;
       }
 
-      const nextSeasonCounter = (currentState?.seasonCounter ?? previousSeasonState?.seasonCounter ?? 0) + 1;
+      const nextSeasonCounter =
+        (currentState?.seasonCounter ??
+          previousSeasonState?.seasonCounter ??
+          0) + 1;
       const nextState = createSharedMarketSeasonState({
         marketProfileSeed,
         seasonCounter: nextSeasonCounter,
@@ -148,8 +157,7 @@ export class SharedMarketStateService {
       return sharedState;
     }
 
-    const fallbackSeasonCounter =
-      (previousSeasonState?.seasonCounter ?? 0) + 1;
+    const fallbackSeasonCounter = (previousSeasonState?.seasonCounter ?? 0) + 1;
     return createSharedMarketSeasonState({
       marketProfileSeed,
       seasonCounter: fallbackSeasonCounter,
@@ -164,7 +172,9 @@ export class SharedMarketStateService {
       return null;
     }
 
-    const payload = await this.redis.get(this.getSeasonStateKey(marketProfileSeed));
+    const payload = await this.redis.get(
+      this.getSeasonStateKey(marketProfileSeed),
+    );
     return payload ? (JSON.parse(payload) as SharedMarketSeasonState) : null;
   }
 

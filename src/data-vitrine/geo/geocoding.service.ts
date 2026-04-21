@@ -61,24 +61,28 @@ export class GeocodingService {
       this.configService.get<string>('GEOCODING_MIN_TIME_MS') || '0',
       10,
     );
-    this.geocodeCacheEnabled = this.configService.get<string>('SHARED_GEOCACHE_ENABLED') === 'true';
+    this.geocodeCacheEnabled =
+      this.configService.get<string>('SHARED_GEOCACHE_ENABLED') === 'true';
     this.limiter = new Bottleneck({
       maxConcurrent: Math.max(1, this.geocodingConcurrency),
       minTime: Math.max(0, this.geocodingMinTimeMs),
     });
 
     const redisUrl = this.configService.get<string>('REDIS_URL');
-    this.redis = this.geocodeCacheEnabled && redisUrl
-      ? new Redis(redisUrl, {
-        lazyConnect: false,
-        maxRetriesPerRequest: 1,
-        enableReadyCheck: false,
-      })
-      : null;
+    this.redis =
+      this.geocodeCacheEnabled && redisUrl
+        ? new Redis(redisUrl, {
+            lazyConnect: false,
+            maxRetriesPerRequest: 1,
+            enableReadyCheck: false,
+          })
+        : null;
 
     if (this.redis) {
       this.redis.on('error', (err) => {
-        this.logger.warn(`Redis geocache unavailable: ${err.message}. Shared cache will be disabled.`);
+        this.logger.warn(
+          `Redis geocache unavailable: ${err.message}. Shared cache will be disabled.`,
+        );
         this.geocodeCacheEnabled = false;
       });
     }
@@ -149,7 +153,9 @@ export class GeocodingService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.stats.fallbacks += 1;
-      this.logger.warn(`Geocoding failed for "${city}": ${message}. Using fallback.`);
+      this.logger.warn(
+        `Geocoding failed for "${city}": ${message}. Using fallback.`,
+      );
       this.cache.set(cityKey, this.fallback);
       return this.fallback;
     }
@@ -162,14 +168,18 @@ export class GeocodingService {
 
     try {
       const cached = await this.redis.get(`${this.redisCachePrefix}${cityKey}`);
-      return cached ? JSON.parse(cached) as GeoResult : null;
+      return cached ? (JSON.parse(cached) as GeoResult) : null;
     } catch (error) {
       this.disableSharedCacheIfUnavailable(error, 'read');
       return null;
     }
   }
 
-  private async writeToSharedCache(cityKey: string, city: string, result: GeoResult): Promise<void> {
+  private async writeToSharedCache(
+    cityKey: string,
+    city: string,
+    result: GeoResult,
+  ): Promise<void> {
     if (!this.geocodeCacheEnabled || !this.redis) {
       return;
     }
@@ -184,12 +194,17 @@ export class GeocodingService {
     }
   }
 
-  private disableSharedCacheIfUnavailable(error: unknown, action: 'read' | 'write') {
+  private disableSharedCacheIfUnavailable(
+    error: unknown,
+    action: 'read' | 'write',
+  ) {
     const message = error instanceof Error ? error.message : String(error);
 
     if (message.includes('Redis') || message.includes('ECONNREFUSED')) {
       this.geocodeCacheEnabled = false;
-      this.logger.warn(`Shared geocode cache is unavailable during ${action}; falling back to in-memory cache only.`);
+      this.logger.warn(
+        `Shared geocode cache is unavailable during ${action}; falling back to in-memory cache only.`,
+      );
       return;
     }
 
@@ -239,7 +254,9 @@ export class GeocodingService {
     const feature = data.results[0];
 
     if (!feature.timezone || !feature.timezone.name) {
-      this.logger.warn(`No timezone data returned for query: ${query}, defaulting to Europe/Moscow`);
+      this.logger.warn(
+        `No timezone data returned for query: ${query}, defaulting to Europe/Moscow`,
+      );
       return {
         lat: feature.lat.toString(),
         lon: feature.lon.toString(),

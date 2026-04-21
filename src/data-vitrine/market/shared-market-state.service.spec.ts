@@ -30,7 +30,11 @@ class FakeRedis {
     return this.storage.get(key) ?? null;
   }
 
-  async set(key: string, value: string, ...args: Array<string | number>): Promise<'OK' | null> {
+  async set(
+    key: string,
+    value: string,
+    ...args: Array<string | number>
+  ): Promise<'OK' | null> {
     this.cleanup(key);
 
     if (args.includes('NX') && this.storage.has(key)) {
@@ -106,7 +110,9 @@ describe('shared-market-state.service', () => {
 
     expect(firstRun.globalBatchNumber).toBe(1);
     expect(secondRun.globalBatchNumber).toBe(1);
-    expect(secondRun.seasonState.seasonKey).toBe(firstRun.seasonState.seasonKey);
+    expect(secondRun.seasonState.seasonKey).toBe(
+      firstRun.seasonState.seasonKey,
+    );
     expect(secondRun.seasonState.startedAtGlobalBatch).toBe(1);
   });
 });

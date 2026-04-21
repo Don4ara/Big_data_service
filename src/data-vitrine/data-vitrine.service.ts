@@ -60,7 +60,10 @@ export class DataVitrineService implements OnModuleInit {
   private autoGenerationTimer: NodeJS.Timeout | null = null;
   private autoGenerationBatchSize = 0;
   private autoGenerationIntervalMs = 0;
-  private readonly maxQueuedDbBatches = parseInt(process.env.MAX_QUEUED_DB_BATCHES || '4', 10);
+  private readonly maxQueuedDbBatches = parseInt(
+    process.env.MAX_QUEUED_DB_BATCHES || '4',
+    10,
+  );
   private readonly orderGenerationConcurrency = parseInt(
     process.env.ORDER_GENERATION_CONCURRENCY || '24',
     10,
@@ -87,14 +90,17 @@ export class DataVitrineService implements OnModuleInit {
   private marketDeliveredRateBias = 0;
   private marketDeliveringRateBias = 0;
   private restaurantCityById = new Map<number, string>();
-  private restaurantRuntimeProfiles = new Map<number, RestaurantRuntimeProfile>();
+  private restaurantRuntimeProfiles = new Map<
+    number,
+    RestaurantRuntimeProfile
+  >();
   private statusQuotaProfile: StatusQuotaProfile | null = null;
 
   constructor(
     private readonly geocodingService: GeocodingService,
     private readonly prisma: PrismaService,
     private readonly sharedMarketStateService: SharedMarketStateService,
-  ) { }
+  ) {}
 
   // При старте модуля — засеять фиксированные рестораны (upsert)
   async onModuleInit() {
@@ -115,9 +121,17 @@ export class DataVitrineService implements OnModuleInit {
   }
 
   private startAutoGeneration() {
-    this.autoGenerationBatchSize = parseInt(process.env.AUTO_GENERATE_BATCH_SIZE || '50', 10);
-    this.autoGenerationIntervalMs = parseInt(process.env.AUTO_GENERATE_INTERVAL || '5000', 10);
-    this.logger.log(`[Beast Mode] Запуск автоматической генерации: ${this.autoGenerationBatchSize} заказов каждые ${this.autoGenerationIntervalMs}мс`);
+    this.autoGenerationBatchSize = parseInt(
+      process.env.AUTO_GENERATE_BATCH_SIZE || '50',
+      10,
+    );
+    this.autoGenerationIntervalMs = parseInt(
+      process.env.AUTO_GENERATE_INTERVAL || '5000',
+      10,
+    );
+    this.logger.log(
+      `[Beast Mode] Запуск автоматической генерации: ${this.autoGenerationBatchSize} заказов каждые ${this.autoGenerationIntervalMs}мс`,
+    );
     this.scheduleNextAutoGeneration(0);
   }
 
@@ -133,7 +147,9 @@ export class DataVitrineService implements OnModuleInit {
       }
 
       if (this.queuedDbBatches >= this.maxQueuedDbBatches) {
-        this.logger.warn(`⏸ [Авто-Воркер] Пауза генерации: DB queue=${this.queuedDbBatches}, лимит=${this.maxQueuedDbBatches}`);
+        this.logger.warn(
+          `⏸ [Авто-Воркер] Пауза генерации: DB queue=${this.queuedDbBatches}, лимит=${this.maxQueuedDbBatches}`,
+        );
         this.scheduleNextAutoGeneration(this.autoGenerationIntervalMs);
         return;
       }
@@ -141,7 +157,9 @@ export class DataVitrineService implements OnModuleInit {
       this.isGenerating = true;
       try {
         await this.generateOrders(this.autoGenerationBatchSize);
-        this.logger.log(`✅ [Авто-Воркер] Сгенерировано и сохранено ${this.autoGenerationBatchSize} заказов.`);
+        this.logger.log(
+          `✅ [Авто-Воркер] Сгенерировано и сохранено ${this.autoGenerationBatchSize} заказов.`,
+        );
       } catch (err) {
         this.logger.error('❌ Ошибка в автоматической генерации', err);
       } finally {
@@ -157,7 +175,9 @@ export class DataVitrineService implements OnModuleInit {
       // База уже заполнена — только загружаем кэш
       this.dbRestaurantsCache = await this.prisma.restaurant.findMany();
       this.hydrateRestaurantCityCache(this.dbRestaurantsCache);
-      this.logger.log(`Кэш ресторанов загружен (${this.dbRestaurantsCache.length} шт.)`);
+      this.logger.log(
+        `Кэш ресторанов загружен (${this.dbRestaurantsCache.length} шт.)`,
+      );
       return;
     }
 
@@ -195,10 +215,14 @@ export class DataVitrineService implements OnModuleInit {
     // Загружаем рестораны из БД в кэш для генерации заказов
     this.dbRestaurantsCache = await this.prisma.restaurant.findMany();
     this.hydrateRestaurantCityCache(this.dbRestaurantsCache);
-    this.logger.log(`Загружено ${this.dbRestaurantsCache.length} ресторанов в кэш`);
+    this.logger.log(
+      `Загружено ${this.dbRestaurantsCache.length} ресторанов в кэш`,
+    );
   }
 
-  private hydrateRestaurantCityCache(restaurantsFromDb: Array<{ id: number; address: string }>) {
+  private hydrateRestaurantCityCache(
+    restaurantsFromDb: Array<{ id: number; address: string }>,
+  ) {
     this.restaurantCityById = new Map(
       restaurantsFromDb.map((restaurant) => [
         restaurant.id,
@@ -207,11 +231,12 @@ export class DataVitrineService implements OnModuleInit {
     );
   }
 
-
   async generateOrders(count: number): Promise<any[]> {
     const startedAt = Date.now();
     this.generationBatchCounter += 1;
-    this.logger.log(`🛠 [Воркер] Начинаю подготовку ${count} заказов (параллельно)...`);
+    this.logger.log(
+      `🛠 [Воркер] Начинаю подготовку ${count} заказов (параллельно)...`,
+    );
 
     await this.syncGenerationProfileSeed();
     const quotaResult = buildStatusPlan({
@@ -230,21 +255,27 @@ export class DataVitrineService implements OnModuleInit {
       (plannedStatus) => this.generateSingleOrder(plannedStatus),
     );
 
-    newOrders = newOrders.filter(order => order !== null);
+    newOrders = newOrders.filter((order) => order !== null);
 
     if (newOrders.length === 0) {
-      this.logger.warn('⚠️ [Воркер] Ни один из заказов не сгенерирован (вероятно, кончились лимиты API).');
+      this.logger.warn(
+        '⚠️ [Воркер] Ни один из заказов не сгенерирован (вероятно, кончились лимиты API).',
+      );
       return [];
     }
 
     this.savedOrders.push(...newOrders);
     if (this.savedOrders.length > DataVitrineService.MAX_IN_MEMORY) {
-      this.savedOrders = this.savedOrders.slice(-DataVitrineService.MAX_IN_MEMORY);
+      this.savedOrders = this.savedOrders.slice(
+        -DataVitrineService.MAX_IN_MEMORY,
+      );
     }
 
     this.enqueueDbWrite(newOrders);
 
-    this.logger.log(`⚙️ [Воркер] Батч ${newOrders.length}/${count} завершен за ${Date.now() - startedAt}мс`);
+    this.logger.log(
+      `⚙️ [Воркер] Батч ${newOrders.length}/${count} завершен за ${Date.now() - startedAt}мс`,
+    );
     return newOrders;
   }
 
@@ -254,9 +285,13 @@ export class DataVitrineService implements OnModuleInit {
     this.dbWriteQueue = this.dbWriteQueue
       .then(async () => {
         this.isDbWriteActive = true;
-        this.logger.log(`📤 [Воркер] Фоновая запись ${orders.length} заказов в БД. Очередь: ${this.queuedDbBatches}`);
+        this.logger.log(
+          `📤 [Воркер] Фоновая запись ${orders.length} заказов в БД. Очередь: ${this.queuedDbBatches}`,
+        );
         await this.saveOrdersToDb(orders);
-        this.logger.log(`✅ [Воркер] Фоновая запись ${orders.length} заказов завершена.`);
+        this.logger.log(
+          `✅ [Воркер] Фоновая запись ${orders.length} заказов завершена.`,
+        );
       })
       .catch((err) => {
         this.logger.error('❌ Ошибка фоновой записи в БД', err);
@@ -273,7 +308,13 @@ export class DataVitrineService implements OnModuleInit {
   }
 
   // Получить заказы из БД с пагинацией и поиском
-  async getOrdersPaginated(page: number, limit: number, search?: string, statusFilter?: string, paymentFilter?: string) {
+  async getOrdersPaginated(
+    page: number,
+    limit: number,
+    search?: string,
+    statusFilter?: string,
+    paymentFilter?: string,
+  ) {
     const skip = (page - 1) * limit;
 
     // Формируем условия поиска и фильтрации
@@ -286,7 +327,11 @@ export class DataVitrineService implements OnModuleInit {
           { customer: { fullName: { contains: search, mode: 'insensitive' } } },
           { customer: { phone: { contains: search, mode: 'insensitive' } } },
           { customer: { email: { contains: search, mode: 'insensitive' } } },
-          { restaurant: { brandName: { contains: search, mode: 'insensitive' } } },
+          {
+            restaurant: {
+              brandName: { contains: search, mode: 'insensitive' },
+            },
+          },
           { courier: { name: { contains: search, mode: 'insensitive' } } },
         ],
       });
@@ -418,18 +463,29 @@ export class DataVitrineService implements OnModuleInit {
 
     // Выбираем случайный ресторан из базы (с реальными id)
     const selectedRestaurant = this.randomChoice(this.dbRestaurantsCache);
-    const runtimeProfile = this.getRestaurantRuntimeProfile(selectedRestaurant.id);
+    const runtimeProfile = this.getRestaurantRuntimeProfile(
+      selectedRestaurant.id,
+    );
     const restaurantCity =
       this.restaurantCityById.get(selectedRestaurant.id) ??
       selectedRestaurant.address.split(',')[0].trim();
 
-    const shouldUseRestaurantCity = shouldMatchRestaurantCity(status, Math.random());
-    const city = shouldUseRestaurantCity ? restaurantCity : faker.location.city();
+    const shouldUseRestaurantCity = shouldMatchRestaurantCity(
+      status,
+      Math.random(),
+    );
+    const city = shouldUseRestaurantCity
+      ? restaurantCity
+      : faker.location.city();
     const street = faker.location.street();
     const building = `${this.randomInt(1, 150)}/${this.randomInt(1, 10)}`;
 
     // Получаем координаты и таймзону по адресу через Geoapify API
-    const geoData = await this.geocodingService.getGeoDataForAddress(city, street, building);
+    const geoData = await this.geocodingService.getGeoDataForAddress(
+      city,
+      street,
+      building,
+    );
     if (!geoData) {
       // Геокодер не смог (кончился лимит API) возвращаем null, чтобы заказ отменился
       return null;
@@ -448,14 +504,17 @@ export class DataVitrineService implements OnModuleInit {
 
     // updatedAt = orderDate + случайный отрезок. Задержка зависит от текущего
     // временного состояния ресторана, а не от вечного фиксированного отпечатка.
-    const hoursOffset = this.randomChoice(getDelayHoursChoices(runtimeProfile.lateness));
-    const minutesOffset = hoursOffset === 0
-      ? this.randomChoice(getZeroDelayMinuteChoices(runtimeProfile.lateness))
-      : this.randomInt(0, 59);
+    const hoursOffset = this.randomChoice(
+      getDelayHoursChoices(runtimeProfile.lateness),
+    );
+    const minutesOffset =
+      hoursOffset === 0
+        ? this.randomChoice(getZeroDelayMinuteChoices(runtimeProfile.lateness))
+        : this.randomInt(0, 59);
     const updatedAt = new Date(
       orderDateObj.getTime() +
-      hoursOffset * 60 * 60 * 1000 +
-      minutesOffset * 60 * 1000,
+        hoursOffset * 60 * 60 * 1000 +
+        minutesOffset * 60 * 1000,
     ).toISOString();
 
     const orderOptions = {
@@ -488,7 +547,7 @@ export class DataVitrineService implements OnModuleInit {
     // ---------------------------------------------------------
 
     // Применяем порчу к товарам
-    const spoiledItems = items.map(item => ({
+    const spoiledItems = items.map((item) => ({
       ...item,
       quantity: this.spoilQuantity(item.quantity) as number,
       pricePerUnit: this.spoilMoney(item.pricePerUnit) as number,
@@ -505,13 +564,14 @@ export class DataVitrineService implements OnModuleInit {
       paymentMethod: this.randomChoice(PAYMENT_METHODS),
     };
 
-
-
     return {
       orderDate,
       currency: 'RUB',
       customer: {
-        fullName: Math.random() < 0.7 ? this.randomChoice(customerNames) : faker.person.fullName(),
+        fullName:
+          Math.random() < 0.7
+            ? this.randomChoice(customerNames)
+            : faker.person.fullName(),
         phone: this.randomChoice([
           `+7-${this.randomDigits(3)}-${this.randomDigits(3)}-${this.randomDigits(2)}-${this.randomDigits(2)}`,
           `8${this.randomDigits(10)}`,
@@ -528,8 +588,14 @@ export class DataVitrineService implements OnModuleInit {
           intercom: `${this.randomInt(1, 500)}#`,
           postalCode: faker.location.zipCode('######'),
           coordinates: {
-            lat: this.jitterCoordinate(parseFloat(geoData.lat), 0.027).toString(),
-            lon: this.jitterCoordinate(parseFloat(geoData.lon), 0.048).toString(),
+            lat: this.jitterCoordinate(
+              parseFloat(geoData.lat),
+              0.027,
+            ).toString(),
+            lon: this.jitterCoordinate(
+              parseFloat(geoData.lon),
+              0.048,
+            ).toString(),
           },
           deliveryTimeZone: geoData.timezone,
         },
@@ -546,7 +612,10 @@ export class DataVitrineService implements OnModuleInit {
         options: orderOptions,
       },
       courier: {
-        name: Math.random() < 0.7 ? this.randomChoice(courierNames) : faker.person.firstName(),
+        name:
+          Math.random() < 0.7
+            ? this.randomChoice(courierNames)
+            : faker.person.firstName(),
         transportType: this.randomChoice(TRANSPORT_TYPES),
         currentLocation: {
           lat: faker.location.latitude(),
@@ -605,7 +674,9 @@ export class DataVitrineService implements OnModuleInit {
   }
 
   private generateEstimatedArrival(): string {
-    const arrivalDate = new Date(Date.now() + this.randomInt(5, 120) * 60 * 1000);
+    const arrivalDate = new Date(
+      Date.now() + this.randomInt(5, 120) * 60 * 1000,
+    );
     const hours = arrivalDate.getHours();
     const minutes = arrivalDate.getMinutes();
 
@@ -644,7 +715,9 @@ export class DataVitrineService implements OnModuleInit {
     return qty;
   }
 
-  private getRestaurantRuntimeProfile(restaurantId: number): RestaurantRuntimeProfile {
+  private getRestaurantRuntimeProfile(
+    restaurantId: number,
+  ): RestaurantRuntimeProfile {
     const seasonKey = this.getCurrentRestaurantSeasonKey();
     let profile = this.restaurantRuntimeProfiles.get(restaurantId);
 
@@ -771,7 +844,10 @@ export class DataVitrineService implements OnModuleInit {
         });
       });
     } catch (err) {
-      this.logger.error('Ошибка батчевой записи заказов в БД, пробуем поштучно...', err);
+      this.logger.error(
+        'Ошибка батчевой записи заказов в БД, пробуем поштучно...',
+        err,
+      );
       // Fallback: если хоть один запрос упал, идем поштучно чтобы не терять весь батч
       for (const order of orders) {
         try {

@@ -23,7 +23,7 @@ function clamp(value: number, min: number, max: number): number {
 function hashString(value: string): number {
   let hash = 0;
   for (const char of value) {
-    hash = ((hash << 5) - hash) + char.charCodeAt(0);
+    hash = (hash << 5) - hash + char.charCodeAt(0);
     hash |= 0;
   }
   return Math.abs(hash);
@@ -78,7 +78,8 @@ function getRestaurantSeasonShifts(
     (hashToUnit(`${eraSeed}|restaurant:${restaurantId}|era:quality`) - 0.5) * 2;
   const seasonQualityMomentum =
     (hashToUnit(`${seasonKey}|restaurant:${restaurantId}|season:quality`) -
-      0.5) * 2;
+      0.5) *
+    2;
   const qualityMomentum = clamp(
     eraQualityMomentum * 0.72 + seasonQualityMomentum * 0.28,
     -1,
@@ -89,7 +90,8 @@ function getRestaurantSeasonShifts(
     2;
   const seasonLatenessMomentum =
     (hashToUnit(`${seasonKey}|restaurant:${restaurantId}|season:lateness`) -
-      0.5) * 2;
+      0.5) *
+    2;
   const latenessMomentum = clamp(
     eraLatenessMomentum * 0.68 +
       seasonLatenessMomentum * 0.32 -
@@ -111,11 +113,7 @@ function getQualityBounds(baselineQuality: number): {
   downwardRoom: number;
 } {
   const eliteHeadroom =
-    baselineQuality >= 0.95
-      ? 0.04
-      : baselineQuality >= 0.9
-        ? 0.022
-        : 0;
+    baselineQuality >= 0.95 ? 0.04 : baselineQuality >= 0.9 ? 0.022 : 0;
   const upwardRoom = lerp(0.055, 0.135, baselineQuality) + eliteHeadroom;
   const downwardRoom = lerp(0.16, 0.1, baselineQuality);
   const min = Math.max(0.18, baselineQuality - downwardRoom);
@@ -177,9 +175,7 @@ export function getRestaurantBaselines(
     `${baselineSeed}|restaurant:${restaurantId}|quality`,
   );
   const qualityJitter =
-    (hashToUnit(
-      `${baselineSeed}|restaurant:${restaurantId}|quality:jitter`,
-    ) -
+    (hashToUnit(`${baselineSeed}|restaurant:${restaurantId}|quality:jitter`) -
       0.5) *
     0.12;
 
@@ -196,8 +192,7 @@ export function getRestaurantBaselines(
 
   const baselineQuality = clampUnit(baseQuality + qualityJitter);
   const latenessNoise =
-    (hashToUnit(`${baselineSeed}|restaurant:${restaurantId}|lateness`) -
-      0.5) *
+    (hashToUnit(`${baselineSeed}|restaurant:${restaurantId}|lateness`) - 0.5) *
     0.2;
   const baselineLateness = clampUnit(
     0.63 - baselineQuality * 0.5 + latenessNoise,
@@ -218,10 +213,7 @@ export function createRestaurantRuntimeProfile(input: {
   randomFloat: RandomFloatFn;
   randomInt: RandomIntFn;
 }): RestaurantRuntimeProfile {
-  const baselines = getRestaurantBaselines(
-    input.seasonKey,
-    input.restaurantId,
-  );
+  const baselines = getRestaurantBaselines(input.seasonKey, input.restaurantId);
   const seasonShifts = getRestaurantSeasonShifts(
     input.seasonKey,
     input.restaurantId,
@@ -306,7 +298,9 @@ export function refreshRestaurantRuntimeProfile(input: {
 
   return {
     ...input.profile,
-    quality: clampUnit(input.profile.quality * 0.86 + marketQualityTarget * 0.14),
+    quality: clampUnit(
+      input.profile.quality * 0.86 + marketQualityTarget * 0.14,
+    ),
     lateness: clampUnit(
       input.profile.lateness * 0.84 + marketLatenessTarget * 0.16,
     ),

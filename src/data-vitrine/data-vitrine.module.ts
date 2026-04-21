@@ -16,4 +16,4 @@ import { SharedMarketStateService } from './market/shared-market-state.service';
     SharedMarketStateService,
   ],
 })
-export class DataVitrineModule { }
+export class DataVitrineModule {}

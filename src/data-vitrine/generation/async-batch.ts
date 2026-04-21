@@ -21,9 +21,8 @@ export async function mapWithConcurrency<T, TResult>(
   }
 
   await Promise.all(
-    Array.from(
-      { length: Math.min(safeConcurrency, items.length) },
-      () => worker(),
+    Array.from({ length: Math.min(safeConcurrency, items.length) }, () =>
+      worker(),
     ),
   );
 
@@ -37,7 +36,11 @@ export async function eachInChunks<T>(
 ): Promise<void> {
   const safeChunkSize = Math.max(1, chunkSize);
 
-  for (let startIndex = 0; startIndex < items.length; startIndex += safeChunkSize) {
+  for (
+    let startIndex = 0;
+    startIndex < items.length;
+    startIndex += safeChunkSize
+  ) {
     const chunk = items.slice(startIndex, startIndex + safeChunkSize);
 
     await Promise.all(

@@ -44,16 +44,10 @@ describe('market-season', () => {
 
     expect(isSharedMarketSeasonExpired(season, 100)).toBe(false);
     expect(
-      isSharedMarketSeasonExpired(
-        season,
-        100 + season.seasonLengthBatches - 1,
-      ),
+      isSharedMarketSeasonExpired(season, 100 + season.seasonLengthBatches - 1),
     ).toBe(false);
     expect(
-      isSharedMarketSeasonExpired(
-        season,
-        100 + season.seasonLengthBatches,
-      ),
+      isSharedMarketSeasonExpired(season, 100 + season.seasonLengthBatches),
     ).toBe(true);
   });
 });

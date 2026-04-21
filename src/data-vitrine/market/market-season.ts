@@ -13,7 +13,7 @@ function hashString(value: string): number {
   let hash = 0;
 
   for (const char of value) {
-    hash = ((hash << 5) - hash) + char.charCodeAt(0);
+    hash = (hash << 5) - hash + char.charCodeAt(0);
     hash |= 0;
   }
 
@@ -46,8 +46,16 @@ export function createSharedMarketSeasonState(input: {
     seasonLengthBatches: hashToInt(`${seasonSeed}|length`, 6, 12),
     marketQualityBias: hashToRange(`${seasonSeed}|quality`, -0.04, 0.1),
     marketLatenessBias: hashToRange(`${seasonSeed}|lateness`, -0.08, 0.04),
-    marketDeliveredRateBias: hashToRange(`${seasonSeed}|delivered`, -0.0055, 0.0055),
-    marketDeliveringRateBias: hashToRange(`${seasonSeed}|delivering`, -0.0055, 0.0055),
+    marketDeliveredRateBias: hashToRange(
+      `${seasonSeed}|delivered`,
+      -0.0055,
+      0.0055,
+    ),
+    marketDeliveringRateBias: hashToRange(
+      `${seasonSeed}|delivering`,
+      -0.0055,
+      0.0055,
+    ),
   };
 }
 
@@ -55,5 +63,7 @@ export function isSharedMarketSeasonExpired(
   state: SharedMarketSeasonState,
   globalBatchNumber: number,
 ): boolean {
-  return globalBatchNumber >= state.startedAtGlobalBatch + state.seasonLengthBatches;
+  return (
+    globalBatchNumber >= state.startedAtGlobalBatch + state.seasonLengthBatches
+  );
 }

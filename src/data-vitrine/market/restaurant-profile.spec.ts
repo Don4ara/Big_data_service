@@ -101,7 +101,9 @@ describe('restaurant-profile', () => {
       randomInt: (min) => min,
     });
 
-    expect(refreshedProfile.baselineQuality).toBe(initialProfile.baselineQuality);
+    expect(refreshedProfile.baselineQuality).toBe(
+      initialProfile.baselineQuality,
+    );
     expect(refreshedProfile.baselineLateness).toBe(
       initialProfile.baselineLateness,
     );
@@ -181,7 +183,9 @@ describe('restaurant-profile', () => {
     const averageLateness =
       profiles.reduce((sum, profile) => sum + profile.lateness, 0) /
       profiles.length;
-    const worstQuality = Math.min(...profiles.map((profile) => profile.quality));
+    const worstQuality = Math.min(
+      ...profiles.map((profile) => profile.quality),
+    );
     const worstLateness = Math.max(
       ...profiles.map((profile) => profile.lateness),
     );
@@ -226,10 +230,12 @@ describe('restaurant-profile', () => {
   });
 
   it('allows the leaderboard to change when eras rotate', () => {
-    const firstEraTop = buildTopRestaurants('seed-1|season-1', 10)
-      .map((restaurant) => restaurant.id);
-    const nextEraTop = buildTopRestaurants('seed-1|season-5', 10)
-      .map((restaurant) => restaurant.id);
+    const firstEraTop = buildTopRestaurants('seed-1|season-1', 10).map(
+      (restaurant) => restaurant.id,
+    );
+    const nextEraTop = buildTopRestaurants('seed-1|season-5', 10).map(
+      (restaurant) => restaurant.id,
+    );
     const overlap = firstEraTop.filter((restaurantId) =>
       nextEraTop.includes(restaurantId),
     );
@@ -243,10 +249,13 @@ describe('restaurant-profile', () => {
     const baselineRanking = restaurants
       .map((restaurant) => ({
         id: restaurant.id,
-        baselineQuality: getRestaurantBaselines('seed-1', restaurant.id).quality,
+        baselineQuality: getRestaurantBaselines('seed-1', restaurant.id)
+          .quality,
       }))
       .sort((left, right) => right.baselineQuality - left.baselineQuality);
-    const eliteIds = new Set(baselineRanking.slice(0, 10).map((restaurant) => restaurant.id));
+    const eliteIds = new Set(
+      baselineRanking.slice(0, 10).map((restaurant) => restaurant.id),
+    );
     const outsiderIds = new Set(
       baselineRanking.slice(-10).map((restaurant) => restaurant.id),
     );
@@ -264,8 +273,9 @@ describe('restaurant-profile', () => {
   });
 
   it('creates a small elite tier with near-perfect runtime quality', () => {
-    const seasonProfiles = buildProfiles('seed-1|season-1')
-      .sort((left, right) => right.quality - left.quality);
+    const seasonProfiles = buildProfiles('seed-1|season-1').sort(
+      (left, right) => right.quality - left.quality,
+    );
     const topProfiles = seasonProfiles.slice(0, 5);
 
     expect(topProfiles[0].quality).toBeGreaterThanOrEqual(0.98);
@@ -285,15 +295,27 @@ describe('restaurant-profile', () => {
     console.table([
       {
         season: 'season-1',
-        avgQuality: getAverage(seasonOneProfiles.map((profile) => profile.quality)).toFixed(3),
-        medianQuality: getMedian(seasonOneProfiles.map((profile) => profile.quality)).toFixed(3),
-        avgLateness: getAverage(seasonOneProfiles.map((profile) => profile.lateness)).toFixed(3),
+        avgQuality: getAverage(
+          seasonOneProfiles.map((profile) => profile.quality),
+        ).toFixed(3),
+        medianQuality: getMedian(
+          seasonOneProfiles.map((profile) => profile.quality),
+        ).toFixed(3),
+        avgLateness: getAverage(
+          seasonOneProfiles.map((profile) => profile.lateness),
+        ).toFixed(3),
       },
       {
         season: 'season-5',
-        avgQuality: getAverage(seasonTwoProfiles.map((profile) => profile.quality)).toFixed(3),
-        medianQuality: getMedian(seasonTwoProfiles.map((profile) => profile.quality)).toFixed(3),
-        avgLateness: getAverage(seasonTwoProfiles.map((profile) => profile.lateness)).toFixed(3),
+        avgQuality: getAverage(
+          seasonTwoProfiles.map((profile) => profile.quality),
+        ).toFixed(3),
+        medianQuality: getMedian(
+          seasonTwoProfiles.map((profile) => profile.quality),
+        ).toFixed(3),
+        avgLateness: getAverage(
+          seasonTwoProfiles.map((profile) => profile.lateness),
+        ).toFixed(3),
       },
     ]);
 

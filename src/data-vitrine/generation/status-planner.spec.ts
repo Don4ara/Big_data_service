@@ -6,8 +6,10 @@ import {
 } from './status-planner';
 
 describe('status-planner', () => {
-  const deliveredStatus = '\u0414\u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d';
-  const deliveringStatus = '\u0414\u043e\u0441\u0442\u0430\u0432\u043b\u044f\u0435\u0442\u0441\u044f';
+  const deliveredStatus =
+    '\u0414\u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d';
+  const deliveringStatus =
+    '\u0414\u043e\u0441\u0442\u0430\u0432\u043b\u044f\u0435\u0442\u0441\u044f';
 
   function buildStatusBreakdown(statuses: string[]) {
     const counts = new Map<string, number>();
@@ -89,10 +91,18 @@ describe('status-planner', () => {
       cancelledShare: 0.1,
     };
 
-    expect(weightedStatusChoice(profile, 0.1)).toBe('\u041d\u043e\u0432\u044b\u0439');
-    expect(weightedStatusChoice(profile, 0.65)).toBe('\u0413\u043e\u0442\u043e\u0432\u0438\u0442\u0441\u044f');
-    expect(weightedStatusChoice(profile, 0.85)).toBe('\u041f\u0435\u0440\u0435\u0434\u0430\u043d \u043a\u0443\u0440\u044c\u0435\u0440\u0443');
-    expect(weightedStatusChoice(profile, 0.97)).toBe('\u041e\u0442\u043c\u0435\u043d\u0435\u043d');
+    expect(weightedStatusChoice(profile, 0.1)).toBe(
+      '\u041d\u043e\u0432\u044b\u0439',
+    );
+    expect(weightedStatusChoice(profile, 0.65)).toBe(
+      '\u0413\u043e\u0442\u043e\u0432\u0438\u0442\u0441\u044f',
+    );
+    expect(weightedStatusChoice(profile, 0.85)).toBe(
+      '\u041f\u0435\u0440\u0435\u0434\u0430\u043d \u043a\u0443\u0440\u044c\u0435\u0440\u0443',
+    );
+    expect(weightedStatusChoice(profile, 0.97)).toBe(
+      '\u041e\u0442\u043c\u0435\u043d\u0435\u043d',
+    );
   });
 
   it('carries fractional delivered and delivering quotas across batches', () => {
@@ -139,13 +149,29 @@ describe('status-planner', () => {
     expect(shouldMatchRestaurantCity(deliveredStatus, 0.99)).toBe(true);
     expect(shouldMatchRestaurantCity(deliveringStatus, 0.99)).toBe(true);
     expect(
-      shouldMatchRestaurantCity('\u041f\u0435\u0440\u0435\u0434\u0430\u043d \u043a\u0443\u0440\u044c\u0435\u0440\u0443', 0.81),
+      shouldMatchRestaurantCity(
+        '\u041f\u0435\u0440\u0435\u0434\u0430\u043d \u043a\u0443\u0440\u044c\u0435\u0440\u0443',
+        0.81,
+      ),
     ).toBe(true);
     expect(
-      shouldMatchRestaurantCity('\u041f\u0435\u0440\u0435\u0434\u0430\u043d \u043a\u0443\u0440\u044c\u0435\u0440\u0443', 0.83),
+      shouldMatchRestaurantCity(
+        '\u041f\u0435\u0440\u0435\u0434\u0430\u043d \u043a\u0443\u0440\u044c\u0435\u0440\u0443',
+        0.83,
+      ),
     ).toBe(false);
-    expect(shouldMatchRestaurantCity('\u041e\u0442\u043c\u0435\u043d\u0435\u043d', 0.27)).toBe(true);
-    expect(shouldMatchRestaurantCity('\u041e\u0442\u043c\u0435\u043d\u0435\u043d', 0.29)).toBe(false);
+    expect(
+      shouldMatchRestaurantCity(
+        '\u041e\u0442\u043c\u0435\u043d\u0435\u043d',
+        0.27,
+      ),
+    ).toBe(true);
+    expect(
+      shouldMatchRestaurantCity(
+        '\u041e\u0442\u043c\u0435\u043d\u0435\u043d',
+        0.29,
+      ),
+    ).toBe(false);
   });
 
   it('prints analytical quota and batch status summaries', () => {
@@ -201,8 +227,11 @@ describe('status-planner', () => {
     console.table(
       batches.map((batch) => ({
         batch: batch.batch,
-        delivered: batch.statuses.filter((status) => status === deliveredStatus).length,
-        delivering: batch.statuses.filter((status) => status === deliveringStatus).length,
+        delivered: batch.statuses.filter((status) => status === deliveredStatus)
+          .length,
+        delivering: batch.statuses.filter(
+          (status) => status === deliveringStatus,
+        ).length,
       })),
     );
 
