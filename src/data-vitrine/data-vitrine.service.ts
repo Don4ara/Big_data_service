@@ -21,6 +21,10 @@ import {
   SPECIAL_INSTRUCTIONS,
   TRANSPORT_TYPES,
 } from './generation/generation.constants';
+import {
+  buildRandomOrderDate2026,
+  formatSpoiledDateValue,
+} from './generation/order-date';
 import { buildOrderCreateData } from './persistence/order-persistence';
 import {
   createRestaurantRuntimeProfile,
@@ -491,11 +495,9 @@ export class DataVitrineService implements OnModuleInit {
       return null;
     }
 
-    // Генерируем дату заказа
-    const orderDateObj = faker.date.recent();
-
-    // orderDate в случайном формате
-    const orderDate = this.formatOrderDate(orderDateObj);
+    // Генерируем чистую дату заказа для расчетов. В orderDate попадет уже испорченный формат.
+    const orderDateObj = buildRandomOrderDate2026();
+    const orderDate = formatSpoiledDateValue(orderDateObj);
 
     // createdAt = orderDate + пару секунд (попадание записи в БД)
     const createdAt = new Date(
@@ -546,7 +548,7 @@ export class DataVitrineService implements OnModuleInit {
     // Делается ПОСЛЕ всех расчетов, чтобы не сломать математику
     // ---------------------------------------------------------
 
-    // Применяем порчу к товарам
+    // Применяем порчу к товарам и финансам
     const spoiledItems = items.map((item) => ({
       ...item,
       quantity: this.spoilQuantity(item.quantity) as number,
@@ -657,20 +659,6 @@ export class DataVitrineService implements OnModuleInit {
 
   private randomFloat(min: number, max: number): number {
     return min + Math.random() * (max - min);
-  }
-
-  private formatOrderDate(date: Date): string | number {
-    const formatRoll = Math.random();
-
-    if (formatRoll < 0.34) {
-      return date.toISOString();
-    }
-
-    if (formatRoll < 0.67) {
-      return Math.floor(date.getTime() / 1000);
-    }
-
-    return `${this.padTwoDigits(date.getDate())}.${this.padTwoDigits(date.getMonth() + 1)}.${date.getFullYear()}`;
   }
 
   private generateEstimatedArrival(): string {
