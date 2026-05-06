@@ -33,6 +33,7 @@
     "bottleneck": "^2.19.5",
     "bullmq": "^5.73.4",
     "ioredis": "^5.10.1",
+    "kafkajs": "^2.2.4",
     "p-limit": "^7.3.0",
     "pg": "^8.20.0",
     "reflect-metadata": "^0.2.2",

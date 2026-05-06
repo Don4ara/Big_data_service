@@ -10,23 +10,44 @@ import {
   Ip,
 } from '@nestjs/common';
 import { DataVitrineService } from './data-vitrine.service';
+import { KafkaProducerService } from './kafka/kafka-producer.service';
 import { Observable, interval, from } from 'rxjs';
 import { switchMap, map } from 'rxjs/operators';
 
 @Controller('data-vitrine')
 export class DataVitrineController {
-  constructor(private readonly dataVitrineService: DataVitrineService) {}
+  constructor(
+    private readonly dataVitrineService: DataVitrineService,
+    private readonly kafkaProducerService: KafkaProducerService,
+  ) {}
 
   // 1. Сгенерировать новые заказы и запомнить их (разово)
   @Get('generate')
   async generateOrders(@Query('count') count: string) {
-    let countNum = parseInt(count, 10);
-    if (isNaN(countNum) || countNum < 1) {
-      countNum = 10;
-    } else if (countNum > 5000) {
-      countNum = 5000;
-    }
-    return this.dataVitrineService.generateOrders(countNum);
+    return this.dataVitrineService.generateOrders(this.parseCount(count));
+  }
+
+  // 1.1. Сгенерировать новые заказы и отправить их в Kafka
+  @Get('generate/kafka')
+  async generateOrdersToKafka(@Query('count') count: string) {
+    const orders = await this.dataVitrineService.generateOrders(
+      this.parseCount(count),
+      {
+        saveToMemory: false,
+        persistToDb: false,
+      },
+    );
+    await this.kafkaProducerService.publishGeneratedOrders(
+      orders,
+      'GET /data-vitrine/generate/kafka',
+    );
+
+    return {
+      sent: orders.length,
+      topic: this.kafkaProducerService.getTopic(),
+      kafkaEnabled: this.kafkaProducerService.isEnabled(),
+      orders,
+    };
   }
 
   // 2. БЕСКОНЕЧНЫЙ ПОТОК ЗАКАЗОВ В РЕАЛЬНОМ ВРЕМЕНИ (Server-Sent Events)
@@ -120,5 +141,16 @@ export class DataVitrineController {
   @Post('orders')
   addManualOrder(@Body() orderData: any) {
     return this.dataVitrineService.addOrder(orderData);
+  }
+
+  private parseCount(count: string): number {
+    let countNum = parseInt(count, 10);
+    if (isNaN(countNum) || countNum < 1) {
+      countNum = 10;
+    } else if (countNum > 5000) {
+      countNum = 5000;
+    }
+
+    return countNum;
   }
 }
