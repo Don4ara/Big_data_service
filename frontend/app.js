@@ -3,7 +3,7 @@
    Server-side pagination + AJAX search
    ═══════════════════════════════════════════════ */
 
-const API_BASE = 'http://localhost:3006/data-vitrine';
+const API_BASE = 'http://localhost:3000/data-vitrine';
 const PER_PAGE = 50;
 
 // ─── State ───
@@ -27,8 +27,6 @@ const $nextPage = document.getElementById('nextPage');
 const $paginationPages = document.getElementById('paginationPages');
 const $searchInput = document.getElementById('searchInput');
 const $searchClear = document.getElementById('searchClear');
-const $statusFilter = document.getElementById('statusFilter');
-const $paymentFilter = document.getElementById('paymentFilter');
 const $totalCount = document.getElementById('totalCount');
 const $filteredCount = document.getElementById('filteredCount');
 const $currentPage = document.getElementById('currentPage');
@@ -57,12 +55,6 @@ async function fetchPage(page) {
   });
   if (searchQuery.trim()) {
     params.set('search', searchQuery.trim());
-  }
-  if ($statusFilter.value) {
-    params.set('status', $statusFilter.value);
-  }
-  if ($paymentFilter.value) {
-    params.set('payment', $paymentFilter.value);
   }
 
   try {
@@ -334,16 +326,6 @@ function hideTable() {
 // ═══════════════════════════════════════════════
 $searchInput.addEventListener('input', onSearchInput);
 $searchClear.addEventListener('click', clearSearch);
-
-$statusFilter.addEventListener('change', () => {
-  currentPage = 1;
-  fetchPage(1);
-});
-
-$paymentFilter.addEventListener('change', () => {
-  currentPage = 1;
-  fetchPage(1);
-});
 
 $prevPage.addEventListener('click', () => {
   if (currentPage > 1) goToPage(currentPage - 1);
