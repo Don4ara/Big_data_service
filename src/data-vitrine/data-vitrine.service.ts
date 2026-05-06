@@ -48,6 +48,7 @@ import { SharedMarketStateService } from './market/shared-market-state.service';
 import { SharedMarketSeasonState } from './market/market-season';
 import { buildMarketSeedScope } from './market/market-scope';
 import { eachInChunks, mapWithConcurrency } from './generation/async-batch';
+import { applySubtotalErrorChance } from './generation/subtotal-error';
 
 type GenerateOrdersOptions = {
   saveToMemory?: boolean;
@@ -570,8 +571,9 @@ export class DataVitrineService implements OnModuleInit {
     }));
 
     // Применяем порчу к финансам
+    const subtotalWithPossibleError = applySubtotalErrorChance(subtotal);
     const spoiledFinancialSummary = {
-      subtotal: this.spoilMoney(parseFloat(subtotal.toFixed(2))) as number,
+      subtotal: this.spoilMoney(subtotalWithPossibleError) as number,
       taxAmount: this.spoilMoney(taxAmount) as number,
       deliveryFee: this.spoilMoney(deliveryFee) as number,
       serviceFee: this.spoilMoney(serviceFee) as number,
