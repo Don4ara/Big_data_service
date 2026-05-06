@@ -2,100 +2,138 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project overview
+
+This repository is a NestJS backend with a static frontend dashboard. It generates intentionally messy mock restaurant-order data, stores generated orders in PostgreSQL through Prisma, and exposes `/data-vitrine` APIs for generation, streaming, in-memory reads, DB-backed paginated reads, manual insertion, and CAPTCHA reset.
+
+The generated data deliberately includes inconsistent real-world-style formats. Do not normalize dirty fields unless a task explicitly changes that mock-data contract.
+
 ## Commands
 
 - Install dependencies: `npm install`
+- Clean CI install: `npm ci`
+- Build: `npm run build`
 - Start dev server: `npm run start:dev`
 - Start production build locally: `npm run build && npm run start:prod`
-- Build: `npm run build`
-- Lint: `npm run lint`
-- Format backend/test TS files: `npm run format`
 - Unit tests: `npm test`
 - Watch unit tests: `npm run test:watch`
 - Coverage: `npm run test:cov`
 - E2E tests: `npm run test:e2e`
-- Run a single Jest test file: `npx jest src/app.controller.spec.ts`
-- Run a single E2E test file: `npx jest test/app.e2e-spec.ts --config ./test/jest-e2e.json`
-- Generate Prisma client after schema changes: `npx prisma generate`
+- Single unit test file: `npx jest src/app.controller.spec.ts`
+- Single E2E test file: `npx jest test/app.e2e-spec.ts --config ./test/jest-e2e.json`
+- Generate Prisma client: `npx prisma generate`
 - Apply migrations in an existing environment: `npx prisma migrate deploy`
 - Create/apply a local migration during development: `npx prisma migrate dev`
-- Start local Postgres only: `docker compose up -d postgres`
+- Start local infrastructure stack: `docker compose up -d`
 - Start worker stack: `docker compose -f docker-compose.workers.yml up -d`
 - Start local worker stack variant: `docker compose -f docker-compose.workers.local.yml up -d`
 
+Formatting and linting:
+
+- Lint: `npm run lint`
+- Format backend/test TS files: `npm run format`
+- `npm run lint` runs ESLint with `--fix`, so it mutates files.
+- `npm run format` runs Prettier with `--write`, so it mutates files.
+
+CI uses Node.js 22 and runs `npm ci`, `npm run lint`, and `npm run build`.
+
 ## Required environment
 
-- Backend configuration is loaded through `ConfigModule.forRoot({ isGlobal: true })` in `src/app.module.ts`.
-- `.env.example` only includes `GEOAPIFY_API_KEY`, but the app also expects `DATABASE_URL` for Prisma and Postgres credentials when using `docker-compose.yml`.
-- `prisma.config.ts` reads `DATABASE_URL` and uses `prisma/schema.prisma` plus `prisma/migrations/`.
+Configuration is loaded globally via `ConfigModule.forRoot({ isGlobal: true })` in `src/app.module.ts`.
+
+Common variables:
+
+- App/database: `PORT`, `DATABASE_URL`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT`
+- Geocoding: `GEOAPIFY_API_KEY`, `GEOCODING_CONCURRENCY`, `GEOAPIFY_TIMEOUT_MS`, `GEOCODING_RETRIES`, `GEOCODING_MIN_TIME_MS`, `SHARED_GEOCACHE_ENABLED`
+- Redis/shared state: `REDIS_URL`, `SHARED_MARKET_STATE_ENABLED`
+- Auto-generation: `AUTO_GENERATE`, `AUTO_GENERATE_BATCH_SIZE`, `AUTO_GENERATE_INTERVAL`
+- Generation/write performance: `ORDER_GENERATION_CONCURRENCY`, `DB_WRITE_CHUNK_SIZE`, `MAX_QUEUED_DB_BATCHES`
+- Market seeds: `MARKET_PROFILE_SEED`, `MARKET_RUN_SEED`
+
+`prisma.config.ts` reads `DATABASE_URL` and points Prisma at `prisma/schema.prisma` and `prisma/migrations/`.
 
 ## Architecture overview
 
-This repo is a NestJS service that generates “dirty” mock restaurant-order data, persists it to PostgreSQL through Prisma, and serves a simple frontend dashboard that reads paginated orders from the backend.
-
-### Main runtime flow
-
 - `src/main.ts` boots Nest and enables CORS.
-- `src/app.module.ts` wires the app around a single business module: `DataVitrineModule`.
-- `src/data-vitrine/data-vitrine.controller.ts` exposes the public API under `/data-vitrine`:
+- `src/app.module.ts` loads global config and imports `DataVitrineModule`.
+- `src/data-vitrine/data-vitrine.module.ts` wires `DataVitrineController`, `DataVitrineService`, `GeocodingService`, `PrismaService`, and `SharedMarketStateService`.
+- `src/data-vitrine/data-vitrine.controller.ts` exposes `/data-vitrine` endpoints:
   - `GET /generate` for one-shot batch generation
   - `GET /stream` for SSE generation
   - `GET /orders` for the in-memory buffer
   - `GET /orders/db` for paginated DB-backed reads with search/filtering
   - `POST /orders` for manual insertion into the in-memory buffer
   - `POST /solve-captcha` to clear the anti-scrape limiter for DB reads
+- `src/data-vitrine/data-vitrine.service.ts` orchestrates restaurant seeding, order generation, background auto-generation, in-memory buffering, and DB write queueing.
+- Generation helpers live under `src/data-vitrine/generation/`.
+- Market/season helpers live under `src/data-vitrine/market/`.
+- Review scoring helpers live under `src/data-vitrine/review/`.
+- Geocoding lives in `src/data-vitrine/geo/geocoding.service.ts`.
+- Prisma integration is in `src/prisma.service.ts`, `prisma/schema.prisma`, and `src/data-vitrine/persistence/order-persistence.ts`.
 
-### Generation pipeline
+## Runtime and data-generation flow
 
-`src/data-vitrine/data-vitrine.service.ts` is the core of the system.
+- `DataVitrineService.onModuleInit()` seeds the fixed restaurant catalog into Postgres and hydrates restaurant caches.
+- If `AUTO_GENERATE=true`, the service starts background generation using `AUTO_GENERATE_BATCH_SIZE` and `AUTO_GENERATE_INTERVAL`.
+- `generateOrders()` builds a status plan, generates orders with bounded concurrency, keeps only the latest 500 orders in memory, and queues DB writes.
+- `generateSingleOrder()` intentionally emits dirty real-world-style data, including mixed date formats, phone formats, money strings, quantity strings, optional reviews, and varied statuses.
+- DB writes are queued and persisted through `buildOrderCreateData()` using nested Prisma creates.
 
-- On module init it seeds the fixed restaurant catalog into Postgres and caches restaurants in memory for later generation.
-- If `AUTO_GENERATE=true`, it starts a background interval worker using `AUTO_GENERATE_BATCH_SIZE` and `AUTO_GENERATE_INTERVAL`.
-- `generateOrders()` fans out order creation with `Promise.all`, keeps only the latest 500 generated orders in memory for lightweight frontend access, then writes successful orders to Postgres.
-- `generateSingleOrder()` intentionally produces inconsistent real-world-style data formats (dates, phone numbers, money strings, quantities, etc.). Preserve this behavior unless the task explicitly changes the mock-data contract.
-- Persistence uses deep nested Prisma creates for customers, addresses, coordinates, items, options, couriers, locations, and optional reviews. This means write-path changes often affect both generator shape and Prisma relations.
+Preserve the intentionally messy mock-data contract unless a task explicitly asks to normalize it.
 
-### Geocoding and API pressure
+## Persistence and Prisma
 
-`src/data-vitrine/geocoding.service.ts` is the main external-API integration.
+- `prisma/schema.prisma` models orders, customers, addresses, coordinates, items, options, couriers, courier locations, reviews, and restaurants.
+- `Order` is the root persisted entity.
+- `src/data-vitrine/persistence/order-persistence.ts` maps generated nested order objects into Prisma nested create input.
+- `src/prisma.service.ts` uses `@prisma/adapter-pg` with an explicit `pg.Pool` limit, so DB connection pressure depends on both pool size and worker count.
+- Schema changes usually require checking the generator, persistence mapper, API selects, and frontend expectations together.
 
-- Geocoding is done through Geoapify.
-- The service now uses a two-level cache:
-  - in-process memory cache for promise deduping and hot reads
-  - shared Postgres-backed cache (`GeocodeCache` in Prisma) keyed by normalized city name
-- `GEOCODING_CONCURRENCY` controls the `p-limit` gate for outgoing geocoding requests.
-- If the shared cache table is unavailable, the service degrades to in-memory-only caching instead of breaking generation.
+## Geocoding, Redis, and market state
 
-When optimizing generation speed, treat geocoding as the first bottleneck and nested Prisma writes as the second.
+- `src/data-vitrine/geo/geocoding.service.ts` calls Geoapify.
+- Geocoding uses an in-process L1 cache for promise deduplication and hot reads.
+- When `SHARED_GEOCACHE_ENABLED=true` and `REDIS_URL` is set, Redis is used as the shared geocode cache.
+- `GEOCODING_CONCURRENCY`, `GEOAPIFY_TIMEOUT_MS`, `GEOCODING_RETRIES`, and `GEOCODING_MIN_TIME_MS` control external API pressure.
+- If Redis shared cache access fails, geocoding falls back to in-memory-only caching.
+- `src/data-vitrine/market/shared-market-state.service.ts` uses Redis for shared market batch/season state when enabled, and falls back to local state if Redis is unavailable.
 
-### Data model
+When optimizing generation speed, treat geocoding/API pressure, DB write queueing, Prisma nested creates, and Redis/shared-state behavior as connected bottlenecks.
 
-`prisma/schema.prisma` models a denormalized order domain split into related tables:
-
-- `Order` is the root entity.
-- Related records include `Customer`, `DeliveryAddress`, `Coordinates`, `OrderItem`, `OrderOptions`, `Courier`, `CourierLocation`, `Review`, and the fixed `Restaurant` catalog.
-- `GeocodeCache` stores shared geocoding results used across workers/processes.
-
-Because the generator and frontend expect nested order-shaped data, schema changes should be checked against both write logic and dashboard reads.
-
-### Frontend/dashboard
+## Frontend/dashboard
 
 The `frontend/` directory is a simple static dashboard, not a separate framework app.
 
-- `frontend/app.js` calls `http://localhost:3006/data-vitrine` directly.
-- It expects server-side pagination, search, and filter behavior from `GET /data-vitrine/orders/db`.
-- The frontend also handles the backend’s anti-scrape `429 CAPTCHA_REQUIRED` response by showing a modal and calling `POST /solve-captcha`.
+- `frontend/app.js` calls `http://localhost:3000/data-vitrine` directly.
+- It reads paginated DB-backed orders from `GET /data-vitrine/orders/db`.
+- It expects server-side pagination and search.
+- It handles backend `429 CAPTCHA_REQUIRED` responses by showing a modal and calling `POST /data-vitrine/solve-captcha`.
+- If backend ports, route behavior, response shape, pagination, or selected DB fields change, update `frontend/app.js` manually because the API base URL and rendering expectations are hardcoded.
 
-If backend ports or route behavior change, the dashboard may need manual updates because its API base URL is hardcoded.
+## Docker and worker topology
 
-### Docker and worker topology
+- `docker-compose.yml` starts local infrastructure: PostgreSQL, Redis, Kafka, and Kafka UI.
+- Kafka is present in Docker Compose, but no current source integration was found.
+- `docker-compose.workers.yml` starts multiple app worker containers with `AUTO_GENERATE=true`.
+- `docker-compose.workers.local.yml` is a local worker-stack variant.
+- Workers use different `PORT` values and share the same database.
+- Pool sizing, worker count, `ORDER_GENERATION_CONCURRENCY`, `DB_WRITE_CHUNK_SIZE`, `MAX_QUEUED_DB_BATCHES`, Redis behavior, and Geoapify limits should be considered together.
 
-- `docker-compose.yml` only starts PostgreSQL.
-- `docker-compose.workers.yml` and `docker-compose.workers.local.yml` run many app instances with `AUTO_GENERATE=true`; this is how high-throughput generation is achieved.
-- Each worker has its own `PORT` and API key, but all share the same database.
-- `src/prisma.service.ts` uses `@prisma/adapter-pg` with an explicit `pg.Pool` limit of 5 connections, so pool sizing and worker counts interact directly.
+## Working guidelines for Claude Code
+
+- Prefer source files, Prisma schema, package scripts, `.env.example`, and Docker Compose files over `README.md` when they conflict.
+- Do not normalize intentionally dirty generated order fields unless explicitly requested.
+- When changing order shape, check all of:
+  - generator output in `src/data-vitrine/data-vitrine.service.ts`
+  - Prisma mapping in `src/data-vitrine/persistence/order-persistence.ts`
+  - Prisma schema in `prisma/schema.prisma`
+  - API selects in `getOrdersPaginated()`
+  - frontend rendering in `frontend/app.js`
+- Treat `npm run lint` and `npm run format` as mutating commands.
+- Avoid broad DB/worker performance changes without considering external Geoapify limits, Redis cache behavior, and Prisma connection pressure.
 
 ## Notes from current repo state
 
-- `README.md` explicitly says it is not up to date. Prefer code, Prisma schema, and compose files over README claims when they conflict.
-- There is currently no existing `CLAUDE.md`, `.cursorrules`, `.cursor/rules/`, or `.github/copilot-instructions.md` in this repository.
+- This repository already uses this `CLAUDE.md` as the primary Claude Code guidance file.
+- `README.md` starts with “README НЕ АКТУАЛЬНА!!!”; use it only for broad domain context and prefer source code, Prisma schema, package scripts, and Docker Compose files over README claims.
+- No `.cursorrules`, `.cursor/rules/`, or `.github/copilot-instructions.md` were found during the latest guidance refresh.
