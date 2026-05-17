@@ -566,8 +566,42 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   color: var(--color-text-muted);
+  font-family: var(--font);
   font-size: 0.85rem;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.pagination__ellipsis:hover,
+.pagination__ellipsis:focus-visible {
+  background: var(--color-surface-2);
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+  outline: none;
+}
+
+.pagination__jump {
+  width: 64px;
+  height: 40px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-family: var(--font);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: center;
+  outline: none;
+  box-shadow: 0 2px 12px var(--color-accent-glow);
+}
+
+.pagination__jump--invalid {
+  border-color: #ef4444;
+  box-shadow: 0 2px 12px rgba(239, 68, 68, 0.25);
 }
 
 /* ═══════════ MODAL ═══════════ */

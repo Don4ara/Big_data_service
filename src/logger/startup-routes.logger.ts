@@ -27,9 +27,6 @@ export function logStartupRoutes(appUrl: string): void {
   logger.log(
     `POST ${publicUrl}/data-vitrine/orders         - вручную добавить заказ`,
   );
-  logger.log(
-    `POST ${publicUrl}/data-vitrine/solve-captcha  - снять антискрапинг-блокировку`,
-  );
 }
 
 function normalizeAppUrl(appUrl: string): string {

@@ -30,9 +30,6 @@ const $searchClear = document.getElementById('searchClear');
 const $totalCount = document.getElementById('totalCount');
 const $filteredCount = document.getElementById('filteredCount');
 const $currentPage = document.getElementById('currentPage');
-const $modal = document.getElementById('captchaModal');
-const $modalOverlay = document.querySelector('#captchaModal .modal__overlay');
-const $captchaCheck = document.getElementById('captchaCheck');
 
 // ═══════════════════════════════════════════════
 // AJAX — Запрос страницы заказов с сервера
@@ -61,16 +58,6 @@ async function fetchPage(page) {
     const response = await fetch(`${API_BASE}/orders/db?${params}`, {
       signal: fetchController.signal,
     });
-
-    // Ручная проверка 429 HTTP статуса
-    if (response.status === 429) {
-      const errJson = await response.json();
-      if (errJson.error === 'CAPTCHA_REQUIRED') {
-        showCaptcha();
-        hideLoader();
-        return;
-      }
-    }
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -236,10 +223,13 @@ function renderPagination() {
 
   pages.forEach(p => {
     if (p === '…') {
-      const el = document.createElement('span');
-      el.className = 'pagination__ellipsis';
-      el.textContent = '…';
-      $paginationPages.appendChild(el);
+      const btn = document.createElement('button');
+      btn.className = 'pagination__ellipsis';
+      btn.type = 'button';
+      btn.textContent = '…';
+      btn.title = 'Перейти к странице';
+      btn.addEventListener('click', () => showPageJump(btn));
+      $paginationPages.appendChild(btn);
     } else {
       const btn = document.createElement('button');
       btn.className = 'pagination__page' + (p === currentPage ? ' pagination__page--active' : '');
@@ -248,6 +238,51 @@ function renderPagination() {
       $paginationPages.appendChild(btn);
     }
   });
+}
+
+function showPageJump(anchor) {
+  const input = document.createElement('input');
+  input.className = 'pagination__jump';
+  input.type = 'number';
+  input.min = '1';
+  input.max = String(totalPages);
+  input.value = String(currentPage);
+  input.setAttribute('aria-label', `Номер страницы от 1 до ${totalPages}`);
+
+  anchor.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const close = () => renderPagination();
+  const submit = () => {
+    const page = Number(input.value);
+
+    if (!Number.isInteger(page) || page < 1 || page > totalPages) {
+      input.classList.add('pagination__jump--invalid');
+      input.select();
+      return;
+    }
+
+    if (page === currentPage) {
+      close();
+      return;
+    }
+
+    goToPage(page);
+  };
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      submit();
+    }
+
+    if (event.key === 'Escape') {
+      close();
+    }
+  });
+
+  input.addEventListener('blur', close);
 }
 
 function generatePageNumbers(current, total) {
@@ -271,35 +306,6 @@ function goToPage(page) {
   fetchPage(page);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
-
-// ═══════════════════════════════════════════════
-// СРЕДСТВА АНТИСКРАПИНГА
-// ═══════════════════════════════════════════════
-function showCaptcha() {
-  $modal.classList.add('modal--open');
-  $captchaCheck.checked = false;
-  document.body.style.overflow = 'hidden';
-}
-
-function hideCaptcha() {
-  $modal.classList.remove('modal--open');
-  document.body.style.overflow = '';
-}
-
-$captchaCheck.addEventListener('change', async (e) => {
-  if (e.target.checked) {
-    try {
-      await fetch(`${API_BASE}/solve-captcha`, { method: 'POST' });
-      // Даём 0.5s для "анимации решения"
-      setTimeout(() => {
-        hideCaptcha();
-        fetchPage(currentPage); // Пытаемся заново
-      }, 500);
-    } catch (err) {
-      console.error(err);
-    }
-  }
-});
 
 // ═══════════════════════════════════════════════
 // UI Helpers
