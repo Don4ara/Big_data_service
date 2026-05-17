@@ -18,7 +18,18 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "dump:help": "ts-node --transpile-only dump-loader/dump-loader.ts help",
+    "dump:prepare": "ts-node --transpile-only dump-loader/dump-loader.ts prepare",
+    "dump:start": "ts-node --transpile-only dump-loader/dump-loader.ts start",
+    "dump:up": "ts-node --transpile-only dump-loader/dump-loader.ts up",
+    "dump:import": "ts-node --transpile-only dump-loader/dump-loader.ts import",
+    "dump:stop": "ts-node --transpile-only dump-loader/dump-loader.ts stop",
+    "dump:down": "ts-node --transpile-only dump-loader/dump-loader.ts down",
+    "dump:reset": "ts-node --transpile-only dump-loader/dump-loader.ts reset",
+    "dump:logs": "ts-node --transpile-only dump-loader/dump-loader.ts logs",
+    "dump:ps": "ts-node --transpile-only dump-loader/dump-loader.ts ps",
+    "dump:clean": "ts-node --transpile-only dump-loader/dump-loader.ts clean"
   },
   "dependencies": {
     "@faker-js/faker": "^10.3.0",
