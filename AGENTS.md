@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Project overview
 
@@ -119,7 +119,7 @@ The `frontend/` directory is a simple static dashboard, not a separate framework
 - Workers use different `PORT` values and share the same database.
 - Pool sizing, worker count, `ORDER_GENERATION_CONCURRENCY`, `DB_WRITE_CHUNK_SIZE`, `MAX_QUEUED_DB_BATCHES`, Redis behavior, and Geoapify limits should be considered together.
 
-## Working guidelines for Claude Code
+## Working guidelines for Codex
 
 - Prefer source files, Prisma schema, package scripts, `.env.example`, and Docker Compose files over `README.md` when they conflict.
 - Do not normalize intentionally dirty generated order fields unless explicitly requested.
@@ -134,6 +134,6 @@ The `frontend/` directory is a simple static dashboard, not a separate framework
 
 ## Notes from current repo state
 
-- This repository already uses this `CLAUDE.md` as the primary Claude Code guidance file.
+- This repository already uses this `AGENTS.md` as the primary Codex guidance file.
 - `README.md` starts with “README НЕ АКТУАЛЬНА!!!”; use it only for broad domain context and prefer source code, Prisma schema, package scripts, and Docker Compose files over README claims.
 - No `.cursorrules`, `.cursor/rules/`, or `.github/copilot-instructions.md` were found during the latest guidance refresh.

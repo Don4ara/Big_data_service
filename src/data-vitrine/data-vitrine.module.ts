@@ -5,6 +5,7 @@ import { DataVitrineService } from './data-vitrine.service';
 import { GeocodingService } from './geo/geocoding.service';
 import { PrismaService } from '../prisma.service';
 import { SharedMarketStateService } from './market/shared-market-state.service';
+import { KafkaProducerService } from './kafka/kafka-producer.service';
 
 @Module({
   imports: [HttpModule],
@@ -14,6 +15,7 @@ import { SharedMarketStateService } from './market/shared-market-state.service';
     GeocodingService,
     PrismaService,
     SharedMarketStateService,
+    KafkaProducerService,
   ],
 })
 export class DataVitrineModule {}

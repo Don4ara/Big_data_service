@@ -48,6 +48,12 @@ import { SharedMarketStateService } from './market/shared-market-state.service';
 import { SharedMarketSeasonState } from './market/market-season';
 import { buildMarketSeedScope } from './market/market-scope';
 import { eachInChunks, mapWithConcurrency } from './generation/async-batch';
+import { applySubtotalErrorChance } from './generation/subtotal-error';
+
+type GenerateOrdersOptions = {
+  saveToMemory?: boolean;
+  persistToDb?: boolean;
+};
 
 @Injectable()
 export class DataVitrineService implements OnModuleInit {
@@ -235,7 +241,12 @@ export class DataVitrineService implements OnModuleInit {
     );
   }
 
-  async generateOrders(count: number): Promise<any[]> {
+  async generateOrders(
+    count: number,
+    options: GenerateOrdersOptions = {},
+  ): Promise<any[]> {
+    const saveToMemory = options.saveToMemory ?? true;
+    const persistToDb = options.persistToDb ?? true;
     const startedAt = Date.now();
     this.generationBatchCounter += 1;
     this.logger.log(
@@ -268,14 +279,18 @@ export class DataVitrineService implements OnModuleInit {
       return [];
     }
 
-    this.savedOrders.push(...newOrders);
-    if (this.savedOrders.length > DataVitrineService.MAX_IN_MEMORY) {
-      this.savedOrders = this.savedOrders.slice(
-        -DataVitrineService.MAX_IN_MEMORY,
-      );
+    if (saveToMemory) {
+      this.savedOrders.push(...newOrders);
+      if (this.savedOrders.length > DataVitrineService.MAX_IN_MEMORY) {
+        this.savedOrders = this.savedOrders.slice(
+          -DataVitrineService.MAX_IN_MEMORY,
+        );
+      }
     }
 
-    this.enqueueDbWrite(newOrders);
+    if (persistToDb) {
+      this.enqueueDbWrite(newOrders);
+    }
 
     this.logger.log(
       `⚙️ [Воркер] Батч ${newOrders.length}/${count} завершен за ${Date.now() - startedAt}мс`,
@@ -556,8 +571,9 @@ export class DataVitrineService implements OnModuleInit {
     }));
 
     // Применяем порчу к финансам
+    const subtotalWithPossibleError = applySubtotalErrorChance(subtotal);
     const spoiledFinancialSummary = {
-      subtotal: this.spoilMoney(parseFloat(subtotal.toFixed(2))) as number,
+      subtotal: this.spoilMoney(subtotalWithPossibleError) as number,
       taxAmount: this.spoilMoney(taxAmount) as number,
       deliveryFee: this.spoilMoney(deliveryFee) as number,
       serviceFee: this.spoilMoney(serviceFee) as number,
